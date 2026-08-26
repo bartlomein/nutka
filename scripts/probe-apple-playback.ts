@@ -1,18 +1,26 @@
 import { AppleCatalogProvider } from "../src/services/apple-catalog"
 import { AppleAuthManager } from "../src/services/apple-auth"
+import { AppleDeveloperTokenProvider } from "../src/services/apple-developer-token-provider"
+import { startAppleLoopbackServer } from "../src/services/apple-loopback-server"
 import {
   ApplePlaybackProbeError,
   applePlaybackProfilePath,
+  defaultChromiumExecutablePath,
   runApplePlaybackProbe,
 } from "../src/services/apple-playback-probe"
 import { createCredentialStore } from "../src/services/credentials"
 
-const serviceUrl = process.env.NUTKA_TOKEN_SERVICE_URL ?? "http://127.0.0.1:8787"
-const executablePath = process.env.NUTKA_CHROMIUM_PATH ?? "/usr/bin/chromium"
+const signerUrl = process.env.NUTKA_APPLE_SIGNER_URL ?? "http://127.0.0.1:8788"
+const executablePath =
+  process.env.NUTKA_CHROMIUM_PATH ?? defaultChromiumExecutablePath()
 const query = process.argv.slice(2).join(" ").trim() || "Massive Attack Angel"
 const cancellation = new AbortController()
 process.once("SIGINT", () => cancellation.abort())
 process.once("SIGTERM", () => cancellation.abort())
+
+const developerTokenProvider = new AppleDeveloperTokenProvider(signerUrl)
+const loopbackServer = startAppleLoopbackServer({ issuer: developerTokenProvider })
+const serviceUrl = loopbackServer.origin
 
 const auth = new AppleAuthManager({
   serviceUrl,
@@ -71,4 +79,6 @@ try {
   process.exitCode = 1
 } finally {
   await auth.dispose()
+  loopbackServer.stop()
+  developerTokenProvider.dispose()
 }

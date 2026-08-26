@@ -1,108 +1,51 @@
-export type TokenServiceMode = "mock" | "apple"
+import type { Bindings } from "./bindings"
 
-export interface TokenServiceConfig {
-  mode: TokenServiceMode
-  host: string
-  port: number
-  rateLimitPerMinute: number
-  allowedOrigin?: string
+export const DEFAULT_TOKEN_TTL_SECONDS = 900
+export const MIN_TOKEN_TTL_SECONDS = 360
+export const MAX_TOKEN_TTL_SECONDS = 3_600
+
+export interface SigningConfig {
   tokenTtlSeconds: number
-  apple?: {
-    teamId: string
-    keyId: string
-    privateKey: string
+  teamId: string
+  keyId: string
+  privateKey: string
+}
+
+export function loadSigningConfig(bindings: Bindings): SigningConfig {
+  return {
+    teamId: required(bindings.APPLE_TEAM_ID, "APPLE_TEAM_ID"),
+    keyId: required(bindings.APPLE_KEY_ID, "APPLE_KEY_ID"),
+    privateKey: required(bindings.APPLE_PRIVATE_KEY, "APPLE_PRIVATE_KEY"),
+    tokenTtlSeconds: parseTokenTtl(bindings.APPLE_TOKEN_TTL_SECONDS),
   }
 }
 
-type Environment = Record<string, string | undefined>
-type ReadTextFile = (path: string) => Promise<string>
-
-export async function loadTokenServiceConfig(
-  env: Environment = process.env,
-  readTextFile: ReadTextFile = (path) => Bun.file(path).text(),
-): Promise<TokenServiceConfig> {
-  const mode = parseMode(env.NUTKA_TOKEN_SERVICE_MODE)
-  const config: TokenServiceConfig = {
-    mode,
-    host: env.NUTKA_TOKEN_SERVICE_HOST?.trim() || "127.0.0.1",
-    port: parseInteger("NUTKA_TOKEN_SERVICE_PORT", env.NUTKA_TOKEN_SERVICE_PORT, {
-      defaultValue: 8787,
-      min: 1,
-      max: 65_535,
-    }),
-    rateLimitPerMinute: parseInteger(
-      "NUTKA_RATE_LIMIT_PER_MINUTE",
-      env.NUTKA_RATE_LIMIT_PER_MINUTE,
-      { defaultValue: 30, min: 1, max: 10_000 },
-    ),
-    tokenTtlSeconds: parseInteger(
-      "APPLE_TOKEN_TTL_SECONDS",
-      env.APPLE_TOKEN_TTL_SECONDS,
-      { defaultValue: 900, min: 60, max: 3_600 },
-    ),
-  }
-
-  const allowedOrigin = env.NUTKA_ALLOWED_ORIGIN?.trim()
-  if (allowedOrigin) config.allowedOrigin = allowedOrigin
-
-  if (mode === "apple") {
-    const teamId = required(env, "APPLE_TEAM_ID")
-    const keyId = required(env, "APPLE_KEY_ID")
-    const inlineKey = env.APPLE_PRIVATE_KEY?.trim()
-    const keyPath = env.APPLE_PRIVATE_KEY_PATH?.trim()
-
-    if (inlineKey && keyPath) {
-      throw new Error(
-        "Set only one of APPLE_PRIVATE_KEY or APPLE_PRIVATE_KEY_PATH",
-      )
-    }
-
-    if (!inlineKey && !keyPath) {
-      throw new Error(
-        "APPLE_PRIVATE_KEY or APPLE_PRIVATE_KEY_PATH is required in apple mode",
-      )
-    }
-
-    config.apple = {
-      teamId,
-      keyId,
-      privateKey: inlineKey ?? (await readTextFile(keyPath!)),
-    }
-  }
-
-  return config
+export function isSigningEnabled(bindings: Bindings): boolean {
+  return bindings.SIGNING_ENABLED === "true"
 }
 
-function parseMode(value: string | undefined): TokenServiceMode {
-  const mode = value?.trim() || "mock"
-  if (mode !== "mock" && mode !== "apple") {
-    throw new Error("NUTKA_TOKEN_SERVICE_MODE must be mock or apple")
-  }
-  return mode
-}
-
-function required(env: Environment, name: string): string {
-  const value = env[name]?.trim()
-  if (!value) throw new Error(`${name} is required in apple mode`)
-  return value
-}
-
-function parseInteger(
-  name: string,
-  value: string | undefined,
-  limits: { defaultValue: number; min: number; max: number },
-): number {
-  if (!value) return limits.defaultValue
-
+export function parseTokenTtl(value: string | undefined): number {
+  if (value === undefined) return DEFAULT_TOKEN_TTL_SECONDS
+  if (!/^[1-9]\d*$/.test(value)) throw invalidTtlError()
   const parsed = Number(value)
   if (
-    !Number.isInteger(parsed) ||
-    parsed < limits.min ||
-    parsed > limits.max
+    !Number.isSafeInteger(parsed) ||
+    parsed < MIN_TOKEN_TTL_SECONDS ||
+    parsed > MAX_TOKEN_TTL_SECONDS
   ) {
-    throw new Error(
-      `${name} must be an integer from ${limits.min} to ${limits.max}`,
-    )
+    throw invalidTtlError()
   }
   return parsed
+}
+
+function required(value: string | undefined, name: string): string {
+  const trimmed = value?.trim()
+  if (!trimmed) throw new Error(`${name} binding is required`)
+  return trimmed
+}
+
+function invalidTtlError(): Error {
+  return new Error(
+    `APPLE_TOKEN_TTL_SECONDS must be an integer from ${MIN_TOKEN_TTL_SECONDS} to ${MAX_TOKEN_TTL_SECONDS}`,
+  )
 }

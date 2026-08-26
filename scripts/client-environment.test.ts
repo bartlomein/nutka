@@ -11,6 +11,7 @@ test("client environment excludes Apple signing and fetch-debug variables", () =
     HOME: "/home/example",
     LC_MESSAGES: "en_US.UTF-8",
     NUTKA_ALLOWED_ORIGIN: "https://example.test",
+    NUTKA_APPLE_SIGNER_URL: "https://api.nutka.fm",
     NUTKA_AUTH_LOG: "/tmp/nutka-auth.log",
     NUTKA_CHROMIUM_PATH: "/opt/chrome",
     NUTKA_THEME_PATH: "/home/example/theme.toml",
@@ -20,6 +21,7 @@ test("client environment excludes Apple signing and fetch-debug variables", () =
   expect(environment).toEqual({
     HOME: "/home/example",
     LC_MESSAGES: "en_US.UTF-8",
+    NUTKA_APPLE_SIGNER_URL: "https://api.nutka.fm",
     NUTKA_AUTH_LOG: "/tmp/nutka-auth.log",
     NUTKA_CHROMIUM_PATH: "/opt/chrome",
     NUTKA_THEME_PATH: "/home/example/theme.toml",

@@ -7,6 +7,7 @@ import {
   cancelAppleAuthorizationSession,
   createAppleAuthorizationSession,
   getAppleAuthorizationSessionStatus,
+  type AppleAuthorizationBrowserSession,
   type AppleAuthStatus,
 } from "./apple-auth"
 import type { Fetch } from "./token-service"
@@ -20,6 +21,12 @@ function deferred<T>() {
   let resolve!: (value: T) => void
   const promise = new Promise<T>((done) => (resolve = done))
   return { promise, resolve }
+}
+
+function browserSession(onClose: () => void): AppleAuthorizationBrowserSession {
+  const session = Promise.resolve() as AppleAuthorizationBrowserSession
+  session.close = async () => onClose()
+  return session
 }
 
 function store(initial: string | null = null) {
@@ -168,6 +175,7 @@ describe("AppleAuthManager", () => {
       openBrowser: (url) => {
         events.push("browser")
         expect(url).toBe(`${serviceUrl}/authorize#browserToken=browser-secret`)
+        return browserSession(() => events.push("browser-close"))
       },
       now: () => 1_000,
       logger: {
@@ -184,6 +192,7 @@ describe("AppleAuthManager", () => {
       "create",
       "browser",
       "status",
+      "browser-close",
       "developer",
       "validate",
       "save",
@@ -314,7 +323,7 @@ describe("AppleAuthManager", () => {
       serviceUrl,
       credentialStore: credentials.credentialStore,
       fetch: successFetch(events, "pending"),
-      openBrowser: () => {},
+      openBrowser: () => browserSession(() => events.push("browser-close")),
       sleep: async () => sleeping,
       now: () => 1_000,
     })
@@ -324,8 +333,38 @@ describe("AppleAuthManager", () => {
     await manager.cancel()
     await signingIn
     expect(events).toContain("cancel")
+    expect(events).toContain("browser-close")
     expect(manager.status).toEqual({ state: "signedOut" })
     sleepStarted()
+  })
+
+  test("closes Chromium when authorization status polling fails", async () => {
+    const credentials = store()
+    const events = credentials.events
+    const baseFetch = successFetch(events)
+    let failedStatus = false
+    const manager = new AppleAuthManager({
+      serviceUrl,
+      credentialStore: credentials.credentialStore,
+      fetch: async (input, init) => {
+        if (String(input).endsWith("/auth/sessions/status") && !failedStatus) {
+          failedStatus = true
+          events.push("status-failed")
+          return Response.json({ error: "unavailable" }, { status: 500 })
+        }
+        return baseFetch(input, init)
+      },
+      openBrowser: () => browserSession(() => events.push("browser-close")),
+      now: () => 1_000,
+    })
+
+    await expect(manager.signIn()).rejects.toMatchObject({
+      code: "service_unavailable",
+    })
+    expect(events).toContain("browser-close")
+
+    await manager.signIn()
+    expect(manager.status).toEqual({ state: "signedIn", storefront: "gb" })
   })
 
   test("times out at expiry and best-effort cancels", async () => {

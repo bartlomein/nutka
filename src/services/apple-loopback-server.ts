@@ -1,33 +1,115 @@
-import type { TokenServiceConfig } from "./config"
+import type { AuthLogDetails, AuthLogger } from "./auth-log"
 import {
   AuthorizationBroker,
   AuthorizationBrokerError,
-} from "./authorization-broker"
-import { AUTHORIZE_CSS, AUTHORIZE_HTML, AUTHORIZE_JS } from "./authorize-page"
-import { PLAYBACK_HTML, PLAYBACK_JS } from "./playback-page"
-import { FixedWindowRateLimiter } from "./rate-limit"
-import type { DeveloperTokenIssuer } from "./token"
-import type { AuthLogger } from "../../../src/services/auth-log"
+} from "./apple-authorization-broker"
+import {
+  AUTHORIZE_CSS,
+  AUTHORIZE_HTML,
+  AUTHORIZE_JS,
+  PLAYBACK_HTML,
+  PLAYBACK_JS,
+} from "./apple-browser-pages"
 
+const LOOPBACK_HOST = "127.0.0.1"
+const DEFAULT_PORT = 8787
+const DEFAULT_RATE_LIMIT_PER_MINUTE = 30
+const AUTHORIZATION_TOKEN_VALIDITY_MS = 5 * 60_000 + 30_000
 const MAX_JSON_BODY_BYTES = 8 * 1024
 const BROWSER_COOKIE = "nutka_apple_auth"
 const AUTH_PATH_PREFIX = "/v1/apple/auth/"
 
-export function createRequestHandler(
-  config: TokenServiceConfig,
-  issuer: DeveloperTokenIssuer,
-  limiter = new FixedWindowRateLimiter(config.rateLimitPerMinute),
-  broker = new AuthorizationBroker(
-    `http://127.0.0.1:${config.port}/authorize`,
-  ),
-  logger: AuthLogger = { log() {} },
-): (request: Request, clientId?: string) => Promise<Response> {
-  const authRateLimit = Math.max(10, config.rateLimitPerMinute)
+export interface IssuedDeveloperToken {
+  token: string
+  expiresAt: string
+  mode: "mock" | "apple"
+}
+
+export interface DeveloperTokenIssuer {
+  issue(minimumValidityMs?: number): Promise<IssuedDeveloperToken>
+}
+
+export interface AppleLoopbackRequestHandlerOptions {
+  issuer: DeveloperTokenIssuer
+  port?: number
+  rateLimitPerMinute?: number
+  allowedOrigin?: string
+  logger?: AuthLogger
+}
+
+export interface AppleLoopbackServerOptions {
+  issuer: DeveloperTokenIssuer
+  port?: number
+  rateLimitPerMinute?: number
+  allowedOrigin?: string
+  logger?: AuthLogger
+}
+
+export interface AppleLoopbackServer {
+  origin: string
+  stop(): void
+}
+
+export type AppleLoopbackRequestHandler = (
+  request: Request,
+  clientId?: string,
+) => Promise<Response>
+
+export function createAppleLoopbackRequestHandler(
+  options: AppleLoopbackRequestHandlerOptions,
+): AppleLoopbackRequestHandler {
+  const port = validPort(options.port ?? DEFAULT_PORT, false)
+  return createHandlerForOrigin(options, `http://${LOOPBACK_HOST}:${port}`)
+}
+
+export function startAppleLoopbackServer(
+  options: AppleLoopbackServerOptions,
+): AppleLoopbackServer {
+  const requestedPort = validPort(options.port ?? DEFAULT_PORT, true)
+  let handleRequest: AppleLoopbackRequestHandler | undefined
+  const server = Bun.serve({
+    hostname: LOOPBACK_HOST,
+    port: requestedPort,
+    fetch(request, server) {
+      if (!handleRequest) return json({ error: "Service unavailable" }, 503)
+      const clientId = server.requestIP(request)?.address ?? "unknown"
+      return handleRequest(request, clientId)
+    },
+  })
+  const origin = `http://${LOOPBACK_HOST}:${server.port}`
+  handleRequest = createHandlerForOrigin(options, origin)
+
+  let stopped = false
+  return {
+    origin,
+    stop() {
+      if (stopped) return
+      stopped = true
+      server.stop(true)
+    },
+  }
+}
+
+function createHandlerForOrigin(
+  options: Omit<AppleLoopbackRequestHandlerOptions, "port">,
+  localOrigin: string,
+): AppleLoopbackRequestHandler {
+  const rateLimit = validRateLimit(
+    options.rateLimitPerMinute ?? DEFAULT_RATE_LIMIT_PER_MINUTE,
+  )
+  const tokenLimiter = new FixedWindowRateLimiter(rateLimit)
+  const authRateLimit = Math.max(10, rateLimit)
   const sessionLimiter = new FixedWindowRateLimiter(authRateLimit)
   const claimLimiter = new FixedWindowRateLimiter(authRateLimit)
+  const broker = new AuthorizationBroker(`${localOrigin}/authorize`)
+  const logger = options.logger ?? { log() {} }
+
   return async (request, clientId = "unknown") => {
     const url = new URL(request.url)
-    const localOrigin = `http://127.0.0.1:${config.port}`
+    if (!isExactLoopbackUrl(url, localOrigin)) {
+      return json({ error: "Not found" }, 404)
+    }
+
     const isAuthPath =
       url.pathname === "/authorize" ||
       url.pathname === "/authorize.js" ||
@@ -35,50 +117,50 @@ export function createRequestHandler(
       url.pathname === "/playback" ||
       url.pathname === "/playback.js" ||
       url.pathname.startsWith(AUTH_PATH_PREFIX)
-    const authEnabled =
-      config.mode === "apple" &&
-      config.host === "127.0.0.1" &&
-      url.origin === localOrigin
 
     if (isAuthPath) {
-      if (!authEnabled) return json({ error: "Not found" }, 404)
       const authLimiter =
         url.pathname === "/v1/apple/auth/sessions"
           ? sessionLimiter
           : url.pathname === "/v1/apple/auth/browser/claim"
             ? claimLimiter
             : undefined
-      if (request.method === "POST" && authLimiter && !authLimiter.consume(clientId)) {
+      if (
+        request.method === "POST" &&
+        authLimiter &&
+        !authLimiter.consume(clientId)
+      ) {
         return json({ error: "Rate limit exceeded" }, 429)
       }
-      return handleAuthorizationRequest(request, url, localOrigin, issuer, broker, logger)
+      return handleAuthorizationRequest(
+        request,
+        url,
+        localOrigin,
+        options.issuer,
+        broker,
+        logger,
+      )
     }
 
-    const corsHeaders = getCorsHeaders(request, config.allowedOrigin)
-
+    const corsHeaders = getCorsHeaders(request, options.allowedOrigin)
     if (corsHeaders === null) {
       return json({ error: "Origin is not allowed" }, 403)
     }
-
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: corsHeaders })
     }
-
     if (request.method !== "GET") {
       return json({ error: "Method not allowed" }, 405, corsHeaders)
     }
-
     if (url.pathname === "/health") {
-      return json({ status: "ok", mode: config.mode }, 200, corsHeaders)
+      return json({ status: "ok", mode: "apple" }, 200, corsHeaders)
     }
-
     if (url.pathname === "/v1/apple/developer-token") {
-      if (!limiter.consume(clientId)) {
+      if (!tokenLimiter.consume(clientId)) {
         return json({ error: "Rate limit exceeded" }, 429, corsHeaders)
       }
-
       try {
-        return json(await issuer.issue(), 200, corsHeaders)
+        return json(await options.issuer.issue(), 200, corsHeaders)
       } catch {
         return json(
           { error: "Unable to issue developer token" },
@@ -87,7 +169,6 @@ export function createRequestHandler(
         )
       }
     }
-
     return json({ error: "Not found" }, 404, corsHeaders)
   }
 }
@@ -135,34 +216,40 @@ async function handleAuthorizationRequest(
   try {
     switch (url.pathname) {
       case "/v1/apple/auth/sessions": {
-        const issued = await issuer.issue()
+        const issued = await issuer.issue(AUTHORIZATION_TOKEN_VALIDITY_MS)
         const session = broker.create(issued.token)
-        logger.log("session_created")
+        logAuth(logger, "session_created")
         return json(session, 201)
       }
       case "/v1/apple/auth/sessions/status": {
         const cliToken = requiredString(parsed, "cliToken")
         const status = broker.status(cliToken)
-        if (status.status === "complete") logger.log("authorization_delivered")
+        if (status.status === "complete") {
+          logAuth(logger, "authorization_delivered")
+        }
         return json(status, 200)
       }
       case "/v1/apple/auth/sessions/acknowledge": {
         broker.acknowledge(requiredString(parsed, "cliToken"))
-        logger.log("authorization_acknowledged")
+        logAuth(logger, "authorization_acknowledged")
         return new Response(null, { status: 204, headers: secureHeaders() })
       }
       case "/v1/apple/auth/sessions/cancel": {
-        const cliToken = requiredString(parsed, "cliToken")
-        broker.cancel(cliToken)
-        logger.log("session_cancelled")
+        broker.cancel(requiredString(parsed, "cliToken"))
+        logAuth(logger, "session_cancelled")
         return new Response(null, { status: 204, headers: secureHeaders() })
       }
       case "/v1/apple/auth/browser/claim": {
-        if (!hasExactOrigin(request, localOrigin)) return json({ error: "Forbidden" }, 403)
+        if (!hasExactOrigin(request, localOrigin)) {
+          return json({ error: "Forbidden" }, 403)
+        }
         const claim = broker.claim(requiredString(parsed, "browserToken"))
-        logger.log("browser_connected")
+        logAuth(logger, "browser_connected")
         const response = json(
-          { csrfToken: claim.csrfToken, developerToken: claim.developerToken },
+          {
+            csrfToken: claim.csrfToken,
+            developerToken: claim.developerToken,
+          },
           200,
         )
         response.headers.append(
@@ -172,15 +259,22 @@ async function handleAuthorizationRequest(
         return response
       }
       case "/v1/apple/auth/browser/complete": {
-        if (!hasExactOrigin(request, localOrigin)) return json({ error: "Forbidden" }, 403)
+        if (!hasExactOrigin(request, localOrigin)) {
+          return json({ error: "Forbidden" }, 403)
+        }
         const browserToken = exactCookie(request, BROWSER_COOKIE)
-        if (!browserToken) return json({ error: "Authorization session is not available" }, 401)
+        if (!browserToken) {
+          return json(
+            { error: "Authorization session is not available" },
+            401,
+          )
+        }
         broker.complete(
           browserToken,
           requiredString(parsed, "csrfToken"),
           requiredString(parsed, "musicUserToken"),
         )
-        logger.log("browser_authorization_completed")
+        logAuth(logger, "browser_authorization_completed")
         const response = json({ status: "complete" }, 200)
         response.headers.append(
           "set-cookie",
@@ -189,13 +283,21 @@ async function handleAuthorizationRequest(
         return response
       }
       case "/v1/apple/auth/browser/event": {
-        if (!hasExactOrigin(request, localOrigin)) return json({ error: "Forbidden" }, 403)
+        if (!hasExactOrigin(request, localOrigin)) {
+          return json({ error: "Forbidden" }, 403)
+        }
         const browserToken = exactCookie(request, BROWSER_COOKIE)
-        if (!browserToken) return json({ error: "Authorization session is not available" }, 401)
+        if (!browserToken) {
+          return json(
+            { error: "Authorization session is not available" },
+            401,
+          )
+        }
         const event = requiredString(parsed, "event")
         if (!BROWSER_EVENTS.has(event)) throw new InvalidRequestError()
-        const code = parsed.code === undefined ? undefined : safeDiagnosticCode(parsed.code)
-        logger.log(event, code ? { code } : undefined)
+        const code =
+          parsed.code === undefined ? undefined : safeDiagnosticCode(parsed.code)
+        logAuth(logger, event, code ? { code } : undefined)
         return new Response(null, { status: 204, headers: secureHeaders() })
       }
       default:
@@ -211,20 +313,20 @@ async function handleAuthorizationRequest(
             : error.code === "capacity"
               ? 429
               : 409
-      logger.log("authorization_request_failed", {
+      logAuth(logger, "authorization_request_failed", {
         code: error.code,
         httpStatus: status,
       })
       return json({ error: error.message }, status)
     }
     if (error instanceof InvalidRequestError) {
-      logger.log("authorization_request_failed", {
+      logAuth(logger, "authorization_request_failed", {
         code: "invalid_request",
         httpStatus: 400,
       })
       return json({ error: "Invalid request" }, 400)
     }
-    logger.log("authorization_request_failed", {
+    logAuth(logger, "authorization_request_failed", {
       code: "internal_error",
       httpStatus: 500,
     })
@@ -241,6 +343,37 @@ const BROWSER_EVENTS = new Set([
   "completion_send_started",
   "completion_send_failed",
 ])
+
+class FixedWindowRateLimiter {
+  private readonly clients = new Map<
+    string,
+    { windowStartedAt: number; requestCount: number }
+  >()
+
+  constructor(
+    private readonly limit: number,
+    private readonly windowMilliseconds = 60_000,
+    private readonly now: () => number = Date.now,
+  ) {}
+
+  consume(clientId: string): boolean {
+    const currentTime = this.now()
+    const client = this.clients.get(clientId)
+    if (
+      !client ||
+      currentTime - client.windowStartedAt >= this.windowMilliseconds
+    ) {
+      this.clients.set(clientId, {
+        windowStartedAt: currentTime,
+        requestCount: 1,
+      })
+      return true
+    }
+    if (client.requestCount >= this.limit) return false
+    client.requestCount += 1
+    return true
+  }
+}
 
 function requiredString(body: Record<string, unknown>, key: string): string {
   const value = body[key]
@@ -293,11 +426,23 @@ async function readJsonObject(
       offset += chunk.byteLength
     }
     const body: unknown = JSON.parse(new TextDecoder().decode(bytes))
-    if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error()
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      throw new Error()
+    }
     return body as Record<string, unknown>
   } catch {
     return json({ error: "Invalid JSON body" }, 400)
   }
+}
+
+function isExactLoopbackUrl(url: URL, localOrigin: string): boolean {
+  return (
+    url.origin === localOrigin &&
+    url.protocol === "http:" &&
+    url.hostname === LOOPBACK_HOST &&
+    url.username === "" &&
+    url.password === ""
+  )
 }
 
 function hasExactOrigin(request: Request, localOrigin: string): boolean {
@@ -374,4 +519,31 @@ function json(
   headers.set("referrer-policy", "no-referrer")
   headers.set("x-content-type-options", "nosniff")
   return new Response(JSON.stringify(body), { status, headers })
+}
+
+function logAuth(
+  logger: AuthLogger,
+  event: string,
+  details?: AuthLogDetails,
+): void {
+  try {
+    logger.log(event, details)
+  } catch {
+    // Diagnostics must not interrupt authorization.
+  }
+}
+
+function validPort(port: number, allowZero: boolean): number {
+  const minimum = allowZero ? 0 : 1
+  if (!Number.isInteger(port) || port < minimum || port > 65_535) {
+    throw new TypeError(`port must be an integer from ${minimum} to 65535`)
+  }
+  return port
+}
+
+function validRateLimit(limit: number): number {
+  if (!Number.isInteger(limit) || limit < 1 || limit > 10_000) {
+    throw new TypeError("rateLimitPerMinute must be an integer from 1 to 10000")
+  }
+  return limit
 }

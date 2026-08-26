@@ -18,6 +18,7 @@ import {
 import { loopbackPlaybackUrl } from "./apple-playback-origin"
 import {
   applePlaybackProfilePath,
+  defaultChromiumExecutablePath,
   playbackBrowserEnvironment,
 } from "./apple-playback-probe"
 import { requestDeveloperToken, type Fetch } from "./token-service"
@@ -304,7 +305,8 @@ export class ApplePlaybackController implements PlaybackController<AppleCatalogT
       )
       await this.options.useMusicUserToken((musicUserToken) =>
         worker!.initialize({
-          executablePath: this.options.executablePath ?? "/usr/bin/chromium",
+          executablePath:
+            this.options.executablePath ?? defaultChromiumExecutablePath(),
           playbackUrl,
           profilePath: this.options.profilePath ?? applePlaybackProfilePath(),
           developerToken: issued.token,

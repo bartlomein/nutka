@@ -64,12 +64,8 @@ export class AuthorizationBroker {
     }
     const expiresAt = this.now() + SESSION_TTL_MS
     const session: Session = {
-      cliToken: this.uniqueToken(this.sessionsByCliToken, TOKEN_BYTES, base64Url),
-      browserToken: this.uniqueToken(
-        this.sessionsByBrowserToken,
-        TOKEN_BYTES,
-        base64Url,
-      ),
+      cliToken: this.uniqueToken(this.sessionsByCliToken),
+      browserToken: this.uniqueToken(this.sessionsByBrowserToken),
       csrfToken: base64Url(this.randomBytes(TOKEN_BYTES)),
       developerToken,
       expiresAt,
@@ -92,7 +88,9 @@ export class AuthorizationBroker {
 
   claim(browserToken: string): ClaimedAuthorizationSession {
     const session = this.requireSession(this.sessionsByBrowserToken, browserToken)
-    if (session.state === "claimed") throw new AuthorizationBrokerError("already_claimed")
+    if (session.state === "claimed") {
+      throw new AuthorizationBrokerError("already_claimed")
+    }
     if (session.state !== "pending") this.throwForState(session)
     session.state = "claimed"
     return {
@@ -125,7 +123,6 @@ export class AuthorizationBroker {
       return { status: "pending" }
     }
     if (session.state !== "complete") this.throwForState(session)
-
     return { status: "complete", musicUserToken: session.musicUserToken! }
   }
 
@@ -137,15 +134,16 @@ export class AuthorizationBroker {
 
   cancel(cliToken: string): void {
     const session = this.requireSession(this.sessionsByCliToken, cliToken)
-    if (session.state === "cancelled") throw new AuthorizationBrokerError("cancelled")
-    if (session.state === "consumed") throw new AuthorizationBrokerError("already_consumed")
+    if (session.state === "cancelled") {
+      throw new AuthorizationBrokerError("cancelled")
+    }
+    if (session.state === "consumed") {
+      throw new AuthorizationBrokerError("already_consumed")
+    }
     this.remove(session, "cancelled")
   }
 
-  private requireSession(
-    index: Map<string, Session>,
-    value: string,
-  ): Session {
+  private requireSession(index: Map<string, Session>, value: string): Session {
     const session = value ? index.get(value) : undefined
     if (!session) {
       this.cleanupExpired()
@@ -183,22 +181,26 @@ export class AuthorizationBroker {
     session.state = state
   }
 
-  private uniqueToken(
-    index: Map<string, Session>,
-    byteLength: number,
-    encode: (bytes: Uint8Array) => string,
-  ): string {
+  private uniqueToken(index: Map<string, Session>): string {
     let token: string
-    do token = encode(this.randomBytes(byteLength))
+    do token = base64Url(this.randomBytes(TOKEN_BYTES))
     while (index.has(token))
     return token
   }
 
   private throwForState(session: Session): never {
-    if (session.state === "cancelled") throw new AuthorizationBrokerError("cancelled")
-    if (session.state === "consumed") throw new AuthorizationBrokerError("already_consumed")
-    if (session.state === "claimed") throw new AuthorizationBrokerError("already_claimed")
-    if (session.state === "complete") throw new AuthorizationBrokerError("already_completed")
+    if (session.state === "cancelled") {
+      throw new AuthorizationBrokerError("cancelled")
+    }
+    if (session.state === "consumed") {
+      throw new AuthorizationBrokerError("already_consumed")
+    }
+    if (session.state === "claimed") {
+      throw new AuthorizationBrokerError("already_claimed")
+    }
+    if (session.state === "complete") {
+      throw new AuthorizationBrokerError("already_completed")
+    }
     throw new AuthorizationBrokerError("invalid_session")
   }
 }

@@ -1,77 +1,60 @@
-# Nutka Apple token service
+# Nutka Apple developer-token signer
 
-This service issues short-lived Apple Music developer tokens without putting the
-Apple private key in the open-source Nutka client. Authorization capabilities,
-rate limits, and browser sessions are held only in memory.
+This Cloudflare Worker issues short-lived Apple Music developer tokens. It has
+two routes and does not handle browser authorization, playback, or Music User
+Tokens.
 
-## Local mock mode
+## Routes
 
-From the repository root:
-
-```sh
-bun run dev:apple
-```
-
-Mock mode is the default. It proves the client-to-service connection without
-requiring an Apple Developer account, and it does not produce an Apple-valid
-token.
-
-## Real Apple mode
-
-Copy `services/apple-token/.env.example` to an untracked `.env` at the
-repository root, then set:
-
-```sh
-NUTKA_TOKEN_SERVICE_MODE=apple
-APPLE_TEAM_ID=your-team-id
-APPLE_KEY_ID=your-key-id
-APPLE_PRIVATE_KEY_PATH=/absolute/path/to/AuthKey_KEYID.p8
-```
-
-Run `bun run dev:apple` from that configured environment. Never commit the
-`.p8` key or place it in the Nutka client. The service does not log issued
-tokens.
-
-## Endpoints
-
-- `GET /health`
+- `GET /healthz`
 - `GET /v1/apple/developer-token`
-- `GET /authorize`
-- `GET /playback`
-- `POST /v1/apple/auth/sessions`
-- `POST /v1/apple/auth/sessions/status`
-- `POST /v1/apple/auth/sessions/acknowledge`
-- `POST /v1/apple/auth/sessions/cancel`
-- Browser-only claim and completion endpoints under `/v1/apple/auth/browser/`
 
-## Local authorization
+Other methods and query strings are rejected. Responses do not include CORS
+headers and always use `Cache-Control: no-store` plus hardened browser headers.
 
-Authorization routes are available only in Apple mode when the service binds
-exactly to `127.0.0.1`. Nutka creates a five-minute session and opens the
-localhost `/authorize` page with a 256-bit one-time capability in the URL
-fragment. The browser removes that fragment from its history immediately,
-claims the session automatically, then runs Apple-hosted MusicKit JS. URL
-fragments are not sent in HTTP requests or normal server access logs.
+The token response remains:
 
-The Music User Token is posted in a protected request body, delivered only to
-the capability-holding Nutka process, validated against Apple's storefront
-endpoint, and stored in the operating-system credential manager. Nutka then
-acknowledges the session so the broker can erase it. It is never placed in a URL
-or logged by the service.
+```json
+{
+  "token": "<ES256 JWT>",
+  "expiresAt": "<ISO 8601 timestamp>",
+  "mode": "apple"
+}
+```
 
-Secret-safe authorization events are appended to
-`$XDG_STATE_HOME/nutka/auth.log` (falling back to
-`~/.local/state/nutka/auth.log`). Entries contain no URLs, request bodies,
-headers, capabilities, or Apple tokens.
+## Configuration
 
-The loopback-only `/playback` page is a static MusicKit host for Nutka's headless
-playback worker and standalone proof. It contains no credentials and cannot
-authorize an account. The worker injects short-lived credentials through
-Chromium's private automation pipe after the page loads. MusicKit authorization
-is performed once in a dedicated browser profile with
-`bun run playback:authorize`; later TUI and probe runs reuse that mode-`0700`
-profile without showing a window.
+Cloudflare supplies all runtime configuration as Worker bindings:
 
-The in-memory rate limiter is suitable for local development and a single Bun
-process. A multi-instance deployment must replace it with a shared limiter or a
-platform-provided equivalent.
+- `APPLE_TEAM_ID`
+- `APPLE_KEY_ID`
+- `APPLE_PRIVATE_KEY`, the contents of the Apple `.p8` PKCS#8 private key
+- `APPLE_TOKEN_TTL_SECONDS`, optional, defaults to `900` and must be an integer
+  from `360` through `3600`
+- `SIGNING_ENABLED`, which must equal `true` before the signing route works
+- `RATE_LIMITER`, configured in `wrangler.jsonc` at 30 requests per minute
+
+Keep `SIGNING_ENABLED` false until the bindings are configured. Store production
+credentials with Wrangler rather than in `wrangler.jsonc`:
+
+```sh
+bunx wrangler secret put APPLE_TEAM_ID
+bunx wrangler secret put APPLE_KEY_ID
+bunx wrangler secret put APPLE_PRIVATE_KEY
+bunx wrangler secret put SIGNING_ENABLED
+```
+
+For local development, create an untracked `.dev.vars` from the placeholders in
+`.dev.vars.example`, then run `bun run dev` from this directory. Do not commit a
+real `.p8` key or an enabled `.dev.vars` file.
+
+## Verification and deployment
+
+```sh
+bun install
+bun run check
+bun run deploy
+```
+
+Cloudflare's rate-limit counters are local to each Cloudflare location and are
+eventually consistent. The Worker fails closed if the binding call fails.

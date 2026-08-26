@@ -3,8 +3,15 @@
 import { createCliRenderer } from "@opentui/core"
 
 import { AppleAuthManager } from "./services/apple-auth"
+import { AppleAuthorizationBrowserLauncher } from "./services/apple-authorization-browser"
 import { AppleCatalogProvider } from "./services/apple-catalog"
+import { AppleDeveloperTokenProvider } from "./services/apple-developer-token-provider"
+import {
+  startAppleLoopbackServer,
+  type AppleLoopbackServer,
+} from "./services/apple-loopback-server"
 import { ApplePlaybackController } from "./services/apple-playback"
+import { createAuthLogger } from "./services/auth-log"
 import { createCredentialStore } from "./services/credentials"
 import { createNutkaApp } from "./ui/app"
 import { theme } from "./ui/theme"
@@ -14,17 +21,45 @@ const renderer = await createCliRenderer({
   backgroundColor: theme.background,
 })
 
-const tokenServiceUrl = process.env.NUTKA_TOKEN_SERVICE_URL
+const signerUrl = process.env.NUTKA_APPLE_SIGNER_URL
+let tokenProvider: AppleDeveloperTokenProvider | undefined
+let loopbackServer: AppleLoopbackServer | undefined
+let tokenServiceUrl: string | undefined
 let authManager: AppleAuthManager | undefined
 let setupError: "credential_load_failed" | "service_unavailable" | undefined
-if (tokenServiceUrl) {
+if (signerUrl) {
   try {
+    tokenProvider = new AppleDeveloperTokenProvider(signerUrl)
+    loopbackServer = startAppleLoopbackServer({
+      issuer: tokenProvider,
+      logger: createAuthLogger("service"),
+    })
+    tokenServiceUrl = loopbackServer.origin
+  } catch {
+    tokenProvider?.dispose()
+    loopbackServer?.stop()
+    tokenProvider = undefined
+    loopbackServer = undefined
+    setupError = "service_unavailable"
+  }
+
+  try {
+    if (!tokenServiceUrl) throw new Error("Loopback service unavailable")
+    const authorizationBrowser = new AppleAuthorizationBrowserLauncher({
+      executablePath: process.env.NUTKA_CHROMIUM_PATH,
+    })
     authManager = new AppleAuthManager({
       serviceUrl: tokenServiceUrl,
       credentialStore: createCredentialStore(),
+      openBrowser: authorizationBrowser.openBrowser.bind(authorizationBrowser),
     })
   } catch {
-    setupError = "credential_load_failed"
+    loopbackServer?.stop()
+    tokenProvider?.dispose()
+    loopbackServer = undefined
+    tokenProvider = undefined
+    tokenServiceUrl = undefined
+    setupError ??= "credential_load_failed"
   }
 } else {
   setupError = "service_unavailable"
@@ -102,6 +137,7 @@ if (authManager) {
 
 process.once("SIGINT", () => void shutdown())
 process.once("SIGTERM", () => void shutdown())
+process.once("SIGHUP", () => void shutdown())
 
 async function signOut(): Promise<void> {
   await playbackController?.clearAuthorization()
@@ -115,6 +151,8 @@ async function shutdown(): Promise<void> {
     await playbackController?.dispose()
     await authManager?.dispose()
   } finally {
+    loopbackServer?.stop()
+    tokenProvider?.dispose()
     unsubscribeAuth?.()
     app.destroy()
     renderer.destroy()

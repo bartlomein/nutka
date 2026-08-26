@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test"
 import {
   AuthorizationBroker,
   AuthorizationBrokerError,
-} from "./authorization-broker"
+} from "./apple-authorization-broker"
 
 function deterministicRandom() {
   let call = 0
@@ -15,7 +15,7 @@ function browserToken(authorizationUrl: string): string {
 }
 
 describe("AuthorizationBroker", () => {
-  test("creates independent high-entropy credentials with the browser token only in the fragment", () => {
+  test("creates independent credentials with the browser token only in the fragment", () => {
     const broker = new AuthorizationBroker(
       "http://127.0.0.1:8787/authorize",
       () => 1_000,
@@ -30,9 +30,13 @@ describe("AuthorizationBroker", () => {
     expect(token).toHaveLength(43)
     expect(claimed.browserToken).toHaveLength(43)
     expect(claimed.csrfToken).toHaveLength(43)
-    expect(new Set([created.cliToken, claimed.browserToken, claimed.csrfToken]).size).toBe(3)
+    expect(
+      new Set([created.cliToken, claimed.browserToken, claimed.csrfToken]).size,
+    ).toBe(3)
     expect(created.expiresAt).toBe(new Date(301_000).toISOString())
-    expect(url.origin + url.pathname).toBe("http://127.0.0.1:8787/authorize")
+    expect(url.origin + url.pathname).toBe(
+      "http://127.0.0.1:8787/authorize",
+    )
     expect(url.search).toBe("")
     expect(url.hash).toBe(`#browserToken=${token}`)
     expect(url.pathname).not.toContain(token)
@@ -42,14 +46,15 @@ describe("AuthorizationBroker", () => {
   })
 
   test("retains completion until it is acknowledged exactly once", () => {
-    const broker = new AuthorizationBroker("http://127.0.0.1:8787/authorize")
+    const broker = new AuthorizationBroker(
+      "http://127.0.0.1:8787/authorize",
+    )
     const created = broker.create("developer-token")
 
     expect(broker.status(created.cliToken)).toEqual({ status: "pending" })
-    const token = browserToken(created.authorizationUrl)
-    const claim = broker.claim(token)
+    const claim = broker.claim(browserToken(created.authorizationUrl))
     expect(claim.developerToken).toBe("developer-token")
-    expect(() => broker.claim(token)).toThrow(
+    expect(() => broker.claim(claim.browserToken)).toThrow(
       new AuthorizationBrokerError("already_claimed"),
     )
 
@@ -66,25 +71,34 @@ describe("AuthorizationBroker", () => {
       musicUserToken: "music-user-token",
     })
     broker.acknowledge(created.cliToken)
-    expect(() => broker.status(created.cliToken)).toThrow(AuthorizationBrokerError)
+    expect(() => broker.status(created.cliToken)).toThrow(
+      AuthorizationBrokerError,
+    )
   })
 
-  test("completes two concurrent sessions independently", () => {
-    const broker = new AuthorizationBroker("http://127.0.0.1:8787/authorize")
+  test("completes concurrent sessions independently", () => {
+    const broker = new AuthorizationBroker(
+      "http://127.0.0.1:8787/authorize",
+    )
     const first = broker.create("developer-token-1")
     const second = broker.create("developer-token-2")
-
-    expect(broker.status(first.cliToken)).toEqual({ status: "pending" })
-    expect(broker.status(second.cliToken)).toEqual({ status: "pending" })
 
     const secondClaim = broker.claim(browserToken(second.authorizationUrl))
     const firstClaim = broker.claim(browserToken(first.authorizationUrl))
     expect(firstClaim.developerToken).toBe("developer-token-1")
     expect(secondClaim.developerToken).toBe("developer-token-2")
 
-    broker.complete(secondClaim.browserToken, secondClaim.csrfToken, "music-token-2")
+    broker.complete(
+      secondClaim.browserToken,
+      secondClaim.csrfToken,
+      "music-token-2",
+    )
     expect(broker.status(first.cliToken)).toEqual({ status: "pending" })
-    broker.complete(firstClaim.browserToken, firstClaim.csrfToken, "music-token-1")
+    broker.complete(
+      firstClaim.browserToken,
+      firstClaim.csrfToken,
+      "music-token-1",
+    )
 
     expect(broker.status(first.cliToken)).toEqual({
       status: "complete",
@@ -96,7 +110,7 @@ describe("AuthorizationBroker", () => {
     })
   })
 
-  test("removes expired and terminal sessions without affecting others", () => {
+  test("removes expired and terminal sessions and erases retained state", () => {
     let now = 0
     const broker = new AuthorizationBroker(
       "http://127.0.0.1:8787/authorize",
@@ -124,11 +138,15 @@ describe("AuthorizationBroker", () => {
     const claim = broker.claim(browserToken(active.authorizationUrl))
     const retainedSession = indexes.sessionsByCliToken.get(active.cliToken)!
     broker.complete(claim.browserToken, claim.csrfToken, "active-music-token")
+    expect(retainedSession).toMatchObject({
+      browserToken: "",
+      csrfToken: "",
+      developerToken: "",
+    })
     expect(broker.status(active.cliToken)).toEqual({
       status: "complete",
       musicUserToken: "active-music-token",
     })
-    expect(indexes.sessionsByCliToken.size).toBe(1)
     broker.acknowledge(active.cliToken)
     expect(indexes.sessionsByCliToken.size).toBe(0)
     expect(indexes.sessionsByBrowserToken.size).toBe(0)
@@ -142,15 +160,19 @@ describe("AuthorizationBroker", () => {
   })
 
   test("cancellation removes only the selected session", () => {
-    const broker = new AuthorizationBroker("http://127.0.0.1:8787/authorize")
+    const broker = new AuthorizationBroker(
+      "http://127.0.0.1:8787/authorize",
+    )
     const cancelled = broker.create("cancelled-developer-token")
     const active = broker.create("active-developer-token")
 
     broker.cancel(cancelled.cliToken)
-    expect(() => broker.status(cancelled.cliToken)).toThrow(AuthorizationBrokerError)
-    expect(() => broker.claim(browserToken(cancelled.authorizationUrl))).toThrow(
+    expect(() => broker.status(cancelled.cliToken)).toThrow(
       AuthorizationBrokerError,
     )
+    expect(() =>
+      broker.claim(browserToken(cancelled.authorizationUrl)),
+    ).toThrow(AuthorizationBrokerError)
     expect(broker.status(active.cliToken)).toEqual({ status: "pending" })
   })
 

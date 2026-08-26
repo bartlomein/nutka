@@ -74,12 +74,13 @@ Status: **complete**
 
 Estimated time: about half a day after Apple credentials are available.
 
-Status: **complete** — real signing, catalog access, browser authorization,
-Apple validation, OS-keyring persistence, and restart restoration are verified.
+Status: **complete** — the Hono Cloudflare signer, embedded loopback broker, real
+signing, catalog access, one-window browser authorization, Apple validation,
+OS-keyring persistence, and restart restoration are implemented.
 
 - keep the signing key in a separate token service, never in the client
-- support a safe local mock mode and real short-lived ES256 signing
-- launch the local service and TUI together with `bun run dev:apple`
+- support real short-lived ES256 signing through a local Wrangler process
+- launch the local Wrangler signer and TUI together with `bun run dev:apple`
 - create/configure the MusicKit identifier and private key
 - verify a real developer token against one Apple catalog request
 - complete Apple Music user authorization
@@ -113,9 +114,10 @@ MusicKit through a private pipe and the TUI renders only worker-confirmed state.
 ### Developer-token distribution
 
 Apple Music API requests require a signed developer token. The MusicKit private
-key must never be shipped inside an open-source client. A local prototype can
-use the developer's key, but a public release will likely need a small token
-service or another Apple-approved token strategy.
+key is held only by the Hono Cloudflare Worker and is never shipped inside the
+open-source client. The public signer still needs abuse monitoring and Apple
+approval before release because an embedded client secret would not protect an
+open-source executable.
 
 ### Linux playback and DRM
 

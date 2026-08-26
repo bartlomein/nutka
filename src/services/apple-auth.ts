@@ -138,13 +138,20 @@ export interface AppleAuthManagerOptions {
   serviceUrl: string
   credentialStore: CredentialStore
   fetch?: Fetch
-  openBrowser?: (url: string, signal?: AbortSignal) => void | Promise<void>
+  openBrowser?: (
+    url: string,
+    signal?: AbortSignal,
+  ) => void | Promise<void> | AppleAuthorizationBrowserSession
   sleep?: (milliseconds: number, signal?: AbortSignal) => Promise<void>
   now?: () => number
   pollIntervalMs?: number
   networkTimeoutMs?: number
   browserTimeoutMs?: number
   logger?: AuthLogger
+}
+
+export interface AppleAuthorizationBrowserSession extends Promise<void> {
+  close(): Promise<void>
 }
 
 type Listener = (status: AppleAuthStatus) => void
@@ -161,7 +168,7 @@ export class AppleAuthManager {
   private readonly openBrowserImpl: (
     url: string,
     signal?: AbortSignal,
-  ) => void | Promise<void>
+  ) => void | Promise<void> | AppleAuthorizationBrowserSession
   private readonly sleepImpl: (
     milliseconds: number,
     signal?: AbortSignal,
@@ -180,6 +187,8 @@ export class AppleAuthManager {
   private disposePromise?: Promise<void>
   private credentialWrites: Promise<void> = Promise.resolve()
   private brokerCleanup: Promise<void> = Promise.resolve()
+  private browserCleanup: Promise<void> = Promise.resolve()
+  private authorizationBrowser?: AppleAuthorizationBrowserSession
   private disposed = false
   private readonly listeners = new Set<Listener>()
 
@@ -298,6 +307,7 @@ export class AppleAuthManager {
     this.disposePromise = Promise.all([
       this.credentialWrites,
       this.brokerCleanup,
+      this.closeAuthorizationBrowser(),
       cancellation,
     ]).then(() => {})
     return this.disposePromise
@@ -361,6 +371,9 @@ export class AppleAuthManager {
   }
 
   private async runSignIn(operation: Operation): Promise<void> {
+    await this.browserCleanup
+    if (!this.isCurrent(operation)) return
+
     let session: AppleAuthorizationSession
     try {
       session = await createAppleAuthorizationSession(
@@ -385,14 +398,20 @@ export class AppleAuthManager {
       expiresAt: session.expiresAt,
     })
 
+    let browserSession: AppleAuthorizationBrowserSession | undefined
     try {
       this.logger.log("browser_open_started")
       await runWithAbortTimeout(
         async (signal) => {
-          await this.openBrowserImpl(
+          const opening = this.openBrowserImpl(
             session.authorizationUrl,
             signal,
           )
+          if (isAuthorizationBrowserSession(opening)) {
+            browserSession = opening
+            this.authorizationBrowser = opening
+          }
+          await opening
         },
         {
           signal: operation.controller.signal,
@@ -401,6 +420,11 @@ export class AppleAuthManager {
       )
       this.logger.log("browser_open_succeeded")
     } catch {
+      if (this.authorizationBrowser === browserSession) {
+        await this.closeAuthorizationBrowser()
+      } else {
+        await closeBrowserSession(browserSession)
+      }
       this.logger.log("browser_open_failed")
       if (!this.isCurrent(operation)) return
       this.clearActive(operation)
@@ -422,6 +446,8 @@ export class AppleAuthManager {
       } catch (error) {
         if (!this.isCurrent(operation)) return
         if (error instanceof AppleAuthClientError && error.code === "expired") break
+        await this.closeAuthorizationBrowser()
+        if (!this.isCurrent(operation)) return
         this.clearActive(operation)
         this.cancelDetached(session.cliToken)
         this.failFor(operation, "service_unavailable")
@@ -429,6 +455,8 @@ export class AppleAuthManager {
       if (!this.isCurrent(operation)) return
       if (result.status === "complete") {
         this.logger.log("authorization_received")
+        await this.closeAuthorizationBrowser()
+        if (!this.isCurrent(operation)) return
         this.emitFor(operation, { state: "validating" })
         await this.finishSignIn(operation, session.cliToken, result.musicUserToken)
         return
@@ -444,6 +472,8 @@ export class AppleAuthManager {
       }
     }
 
+    if (!this.isCurrent(operation)) return
+    await this.closeAuthorizationBrowser()
     if (!this.isCurrent(operation)) return
     this.clearActive(operation)
     this.cancelDetached(session.cliToken)
@@ -510,14 +540,21 @@ export class AppleAuthManager {
     operation: Operation,
     cliToken: string | undefined,
   ): Promise<void> {
-    if (!cliToken) return
+    const browserCleanup = this.closeAuthorizationBrowser()
+    if (!cliToken) {
+      await browserCleanup
+      return
+    }
     try {
-      await cancelAppleAuthorizationSession(
-        this.options.serviceUrl,
-        cliToken,
-        this.fetchImpl,
-        this.networkOptions(operation),
-      )
+      await Promise.all([
+        browserCleanup,
+        cancelAppleAuthorizationSession(
+          this.options.serviceUrl,
+          cliToken,
+          this.fetchImpl,
+          this.networkOptions(operation),
+        ),
+      ])
     } catch {
       if (this.isCurrent(operation)) throw new AppleAuthError("service_unavailable")
     }
@@ -527,6 +564,7 @@ export class AppleAuthManager {
     operation: Operation,
     cliToken: string | undefined,
   ): Promise<void> {
+    const browserCleanup = this.closeAuthorizationBrowser()
     const deletion = this.mutateCredential(
       operation,
       () => this.options.credentialStore.delete(),
@@ -546,7 +584,7 @@ export class AppleAuthManager {
       : Promise.resolve(false)
 
     try {
-      await deletion
+      await Promise.all([deletion, browserCleanup])
     } catch {
       if (this.isCurrent(operation)) this.failFor(operation, "credential_delete_failed")
       return
@@ -649,6 +687,15 @@ export class AppleAuthManager {
     ]).then(() => {})
   }
 
+  private closeAuthorizationBrowser(): Promise<void> {
+    const browser = this.authorizationBrowser
+    this.authorizationBrowser = undefined
+    if (!browser) return this.browserCleanup
+    const cleanup = closeBrowserSession(browser)
+    this.browserCleanup = Promise.all([this.browserCleanup, cleanup]).then(() => {})
+    return this.browserCleanup
+  }
+
   private emitFor(operation: Operation, status: AppleAuthStatus): void {
     if (this.isCurrent(operation)) this.emit(status)
   }
@@ -668,6 +715,25 @@ export class AppleAuthManager {
     this.logger.log("auth_failed", { code })
     if (this.isCurrent(operation)) this.emit({ state: "error", code })
     throw new AppleAuthError(code)
+  }
+}
+
+function isAuthorizationBrowserSession(
+  value: unknown,
+): value is AppleAuthorizationBrowserSession {
+  return (
+    value instanceof Promise &&
+    typeof (value as { close?: unknown }).close === "function"
+  )
+}
+
+async function closeBrowserSession(
+  browser: AppleAuthorizationBrowserSession | undefined,
+): Promise<void> {
+  try {
+    await browser?.close()
+  } catch {
+    // Browser cleanup cannot be allowed to retain a Music User Token in memory.
   }
 }
 

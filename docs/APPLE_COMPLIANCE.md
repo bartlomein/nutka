@@ -13,13 +13,16 @@ source. The following must remain private and outside Git:
 - issued developer tokens in logs or diagnostics
 - Music User Tokens in logs, URLs, environment variables, or plaintext files
 
-The client requests a short-lived developer token from the service. The local
-authorization broker passes a Music User Token from Apple-hosted MusicKit JS to
-the same machine through one-time loopback capabilities. Nutka validates it
-before storing it in Linux Secret Service or macOS Keychain. There is no
+The client requests a short-lived developer token from the hosted Cloudflare
+Worker through its embedded loopback service. The Worker receives no Music User
+Token, authorization capability, playback state, or Apple user identity. The
+local authorization broker passes a Music User Token from Apple-hosted MusicKit
+JS to the same machine through one-time loopback capabilities. Nutka validates
+it before storing it in Linux Secret Service or macOS Keychain. There is no
 plaintext fallback.
 
-Authorization routes bind only to `127.0.0.1`. A five-minute, one-time browser
+Nutka starts and stops the authorization routes with the client process and
+binds them only to `127.0.0.1`. A five-minute, one-time browser
 capability is delivered in a URL fragment, which browsers do not send in HTTP
 requests, and is immediately removed from browser history before it is claimed.
 Session and CSRF capabilities and both Apple tokens must remain out of logs and
@@ -34,7 +37,9 @@ retain `no-referrer`.
 The Linux playback controller passes both Apple tokens to a separate supervised
 worker through private standard-I/O pipes. That worker passes them to a
 sandboxed, dedicated Chromium profile only through the private browser
-automation pipe. Tokens must not be placed in process or Chromium arguments,
+automation pipe. Interactive login uses the same mode-`0700` Chromium profile in
+a visible window, which Nutka closes before hidden playback starts. Tokens must
+not be placed in process or Chromium arguments,
 their environments, the playback page URL, browser console output, diagnostics,
 or the TUI. The persistent profile is mode `0700` because it retains MusicKit's
 browser authorization state. Worker messages and commands are bounded and

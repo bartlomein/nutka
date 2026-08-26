@@ -1,33 +1,14 @@
-export class FixedWindowRateLimiter {
-  private readonly clients = new Map<
-    string,
-    { windowStartedAt: number; requestCount: number }
-  >()
+export type RateLimitBinding = Pick<RateLimit, "limit">
 
-  constructor(
-    private readonly limit: number,
-    private readonly windowMilliseconds = 60_000,
-    private readonly now: () => number = Date.now,
-  ) {}
+export interface RateLimiter {
+  consume(key: string): Promise<boolean>
+}
 
-  consume(clientId: string): boolean {
-    const currentTime = this.now()
-    const client = this.clients.get(clientId)
-
-    if (
-      !client ||
-      currentTime - client.windowStartedAt >= this.windowMilliseconds
-    ) {
-      this.clients.set(clientId, {
-        windowStartedAt: currentTime,
-        requestCount: 1,
-      })
-      return true
-    }
-
-    if (client.requestCount >= this.limit) return false
-
-    client.requestCount += 1
-    return true
+export function createRateLimiter(binding: RateLimitBinding): RateLimiter {
+  return {
+    async consume(key) {
+      const result = await binding.limit({ key })
+      return result.success
+    },
   }
 }

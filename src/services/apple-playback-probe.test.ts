@@ -178,4 +178,21 @@ describe("Apple playback probe", () => {
       expect(String(error)).not.toContain(secret)
     }
   })
+
+  test("reports when the persistent playback profile is not authorized", async () => {
+    const browser = new FakeProbeBrowser()
+    browser.initialize = async () => {
+      throw new Error("authorization_rejected")
+    }
+
+    await expect(runApplePlaybackProbe({
+      serviceUrl: "http://127.0.0.1:8787",
+      musicUserToken: "music-user-secret",
+      track,
+      executablePath: "/usr/bin/chromium",
+      fetch: tokenFetch,
+      launchBrowser: async () => browser,
+    })).rejects.toMatchObject({ code: "authorization_rejected" })
+    expect(browser.closed).toBe(true)
+  })
 })

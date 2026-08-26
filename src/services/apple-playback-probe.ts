@@ -154,8 +154,12 @@ export async function runApplePlaybackProbe(
     try {
       await browser.initialize(developerToken, options.musicUserToken)
       await browser.setQueue([playParams.id])
-    } catch {
-      throw new ApplePlaybackProbeError("musickit_unavailable")
+    } catch (error) {
+      throw new ApplePlaybackProbeError(
+        error instanceof Error && error.message === "authorization_rejected"
+          ? "authorization_rejected"
+          : "musickit_unavailable",
+      )
     }
 
     await browser.click("play")
@@ -320,7 +324,10 @@ function classifySnapshotError(
 
 type PlaybackPageGlobal = typeof globalThis & {
   __nutkaPlayback: {
-    initialize(developerToken: string, musicUserToken: string): Promise<unknown>
+    initialize(
+      developerToken: string,
+      musicUserToken: string,
+    ): Promise<{ authorized: boolean }>
     setQueue(resourceIds: readonly string[]): void
     snapshot(): PlaybackProbeSnapshot
     seek(positionSeconds: number): Promise<void>
@@ -406,13 +413,14 @@ class PuppeteerPlaybackBrowser implements PlaybackProbeBrowser {
     if (!isPlaybackDocumentUrl(this.page.url(), this.playbackUrl)) {
       throw new Error("untrusted_playback_origin")
     }
-    await this.page.evaluate(
+    const result = await this.page.evaluate(
       async ({ developerToken, musicUserToken }) => {
         const playback = (globalThis as PlaybackPageGlobal).__nutkaPlayback
-        await playback.initialize(developerToken, musicUserToken)
+        return playback.initialize(developerToken, musicUserToken)
       },
       { developerToken, musicUserToken },
     )
+    if (result.authorized !== true) throw new Error("authorization_rejected")
   }
 
   async setQueue(resourceIds: readonly string[]): Promise<void> {
@@ -510,6 +518,14 @@ export function applePlaybackProfilePath(
 ): string {
   const stateHome = environment.XDG_STATE_HOME || join(homedir(), ".local", "state")
   return join(stateHome, "nutka", "chromium-profile")
+}
+
+export function defaultChromiumExecutablePath(
+  platform: NodeJS.Platform = process.platform,
+): string {
+  return platform === "darwin"
+    ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+    : "/usr/bin/chromium"
 }
 
 export async function isDescendantProcess(
