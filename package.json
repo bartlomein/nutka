@@ -1,0 +1,28 @@
+{
+  "name": "nuta",
+  "version": "0.0.1",
+  "description": "Open-source music in your terminal.",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "nuta": "src/index.ts"
+  },
+  "scripts": {
+    "dev": "bun run src/index.ts",
+    "dev:apple": "bun run scripts/dev-apple.ts",
+    "start": "bun run src/index.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "bun": ">=1.3.0"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@opentui/core": "^0.5.8"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.0",
+    "typescript": "^7.0.2"
+  }
+}
