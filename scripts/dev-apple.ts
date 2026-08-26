@@ -1,11 +1,19 @@
 export {}
 
+import { createClientEnvironment } from "./client-environment"
+
 const host = process.env.NUTA_TOKEN_SERVICE_HOST ?? "127.0.0.1"
 const port = process.env.NUTA_TOKEN_SERVICE_PORT ?? "8787"
 const serviceUrl = `http://${host}:${port}`
+const clientEnvironment = createClientEnvironment()
 
 const service = Bun.spawn({
-  cmd: [process.execPath, "run", "services/apple-token/src/index.ts"],
+  cmd: [
+    process.execPath,
+    "--no-env-file",
+    "run",
+    "services/apple-token/src/index.ts",
+  ],
   cwd: process.cwd(),
   env: {
     ...process.env,
@@ -31,10 +39,10 @@ try {
   await waitForService(`${serviceUrl}/health`, service)
 
   app = Bun.spawn({
-    cmd: [process.execPath, "run", "src/index.ts"],
+    cmd: [process.execPath, "--no-env-file", "run", "src/index.ts"],
     cwd: process.cwd(),
     env: {
-      ...process.env,
+      ...clientEnvironment,
       NUTA_TOKEN_SERVICE_URL: serviceUrl,
     },
     stdin: "inherit",

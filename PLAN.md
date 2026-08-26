@@ -7,7 +7,7 @@ Open-source music in your terminal.
 - Project name: **Nuta**
 - Repository/folder: `nuta`
 - CLI command: `nuta`
-- Status: Phase 2 complete; interactive fake-data TUI runs locally
+- Status: Phase 4 complete on Linux; real catalog playback is connected to the TUI
 - First provider: Apple Music
 - Future providers: Spotify, Tidal, and others behind the same provider interface
 
@@ -59,14 +59,14 @@ Status: **complete**
 - add the minimal source layout, scripts, `.gitignore`, README, and license
 - run a blank Nuta screen successfully
 
-### Phase 2 — Fake-data TUI
+### Phase 2 — TUI foundation
 
 Estimated time: 1–2 hours.
 
 Status: **complete**
 
 - build search, results, queue, and now-playing regions
-- use fake tracks so UI work is independent from Apple credentials
+- keep UI work independent from Apple credentials
 - add `j`/`k`, arrow, `Enter`, `Space`, and `q` keyboard controls
 - define the provider and playback interfaces
 
@@ -74,8 +74,8 @@ Status: **complete**
 
 Estimated time: about half a day after Apple credentials are available.
 
-Status: **in progress** — token-service foundation complete; live Apple proof
-still requires credentials.
+Status: **complete** — real signing, catalog access, browser authorization,
+Apple validation, OS-keyring persistence, and restart restoration are verified.
 
 - keep the signing key in a separate token service, never in the client
 - support a safe local mock mode and real short-lived ES256 signing
@@ -89,15 +89,22 @@ still requires credentials.
 
 This is the highest-risk phase and should happen before polishing the app.
 
+Status: **complete on Linux** — a supervised headless Chromium worker controls
+MusicKit through a private pipe and the TUI renders only worker-confirmed state.
+
+- [x] load real catalog song search results with typed pagination
+- [x] open a selected song's album through Apple resource relationships
+- [x] browse personalized and saved playlists with paginated track details
+- [x] build the isolated headless Chromium playback probe
 - prove one Apple Music track can play through MusicKit JS on macOS
-- prove the same approach on Linux
-- run the playback process with no visible browser window after login
-- bridge play, pause, seek, track changes, and errors back to the TUI
+- [x] prove the same approach on Linux
+- [x] run the playback process with no visible browser window after login
+- [x] bridge play, pause, seek, track changes, and errors back to the TUI
 
 ### Phase 5 — Integration and packaging
 
-- replace fake search and track data with the Apple Music provider
-- persist login between runs
+- add Apple Music library albums, artists, and songs
+- harden and package login persistence across supported platforms
 - package the `nuta` executable
 - add macOS and Linux CI builds, then test Windows
 
@@ -119,6 +126,5 @@ a playback implementation.
 
 ## Immediate next action
 
-Finish the Phase 3 credential proof: configure the Apple Music identifier and
-private key, run real signing through the local service, and verify one catalog
-API request without exposing the key or token.
+Prove the worker on macOS, then add library and richer catalog browsing without
+changing the confirmed-state playback boundary.
