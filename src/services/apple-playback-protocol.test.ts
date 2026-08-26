@@ -18,6 +18,21 @@ describe("Apple playback worker protocol", () => {
       musicUserToken: "music-user-token",
     }
     expect(decodePlaybackWorkerRequest(encodePlaybackMessage(request).trim())).toEqual(request)
+    expect(decodePlaybackWorkerRequest('{"type":"previous","requestId":2}')).toEqual({
+      type: "previous",
+      requestId: 2,
+    })
+    expect(decodePlaybackWorkerRequest('{"type":"next","requestId":3}')).toEqual({
+      type: "next",
+      requestId: 3,
+    })
+    expect(decodePlaybackWorkerRequest(
+      '{"type":"set-audio-analysis-enabled","requestId":4,"enabled":false}',
+    )).toEqual({
+      type: "set-audio-analysis-enabled",
+      requestId: 4,
+      enabled: false,
+    })
 
     const response = {
       type: "snapshot" as const,
@@ -54,5 +69,28 @@ describe("Apple playback worker protocol", () => {
       errorCode: null,
     }))).toBeNull()
     expect(decodePlaybackWorkerRequest(`{"type":"initialize","padding":"${"x".repeat(70_000)}"}`)).toBeNull()
+    expect(decodePlaybackWorkerRequest(
+      '{"type":"set-audio-analysis-enabled","requestId":1,"enabled":"false"}',
+    )).toBeNull()
+  })
+
+  test("accepts only fixed-size bounded spectrum frames", () => {
+    const frame = {
+      type: "spectrum" as const,
+      loadId: 2,
+      sequence: 9,
+      bands: Array.from({ length: 64 }, (_, index) => index * 4),
+      rms: 120,
+      peak: 240,
+    }
+    expect(decodePlaybackWorkerResponse(encodePlaybackMessage(frame).trim())).toEqual(frame)
+    expect(decodePlaybackWorkerResponse(JSON.stringify({
+      ...frame,
+      bands: frame.bands.slice(1),
+    }))).toBeNull()
+    expect(decodePlaybackWorkerResponse(JSON.stringify({
+      ...frame,
+      bands: [...frame.bands.slice(0, -1), 256],
+    }))).toBeNull()
   })
 })

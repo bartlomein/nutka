@@ -35,6 +35,13 @@ describe("PlayerPanel", () => {
       durationSeconds: 379,
       errorMessage: null,
       connected: true,
+      randomAvailable: true,
+    })
+    player.renderAudioAnalysis({
+      sequence: 1,
+      bands: Array.from({ length: 64 }, (_, index) => index * 4),
+      rms: 160,
+      peak: 240,
     })
 
     await setup.renderOnce()
@@ -46,6 +53,7 @@ describe("PlayerPanel", () => {
     expect(frame).toContain("6:19")
     expect(frame).toContain("━")
     expect(frame).toContain("●")
+    expect(frame).toMatch(/[▁▂▃▄▅▆▇█]{16,}/)
     expect(frame).toContain("NEXT  Teardrop  ·  Massive Attack")
     expect(frame).toContain("AUDIO  LOSSLESS")
     expect(frame).not.toContain("SPACE  PAUSE")
@@ -71,6 +79,7 @@ describe("PlayerPanel", () => {
       durationSeconds: 379,
       errorMessage: null,
       connected: true,
+      randomAvailable: true,
     })
 
     await setup.renderOnce()
@@ -82,6 +91,53 @@ describe("PlayerPanel", () => {
     expect(frame).not.toContain("Massive Attack")
     expect(frame).not.toContain("NEXT")
     expect(frame).not.toContain("SPACE")
+    expect(frame).not.toMatch(/[▁▂▃▄▅▆▇█]{4,}/)
+    setup.renderer.destroy()
+  })
+
+  test("collapses and clears stale analysis when the visualizer is disabled", async () => {
+    const setup = await createTestRenderer({ width: 80, height: 8 })
+    const player = createPlayerPanel(setup.renderer)
+    setup.renderer.root.add(player.root)
+    player.render({
+      status: "playing",
+      currentTrack,
+      queue: [],
+      positionSeconds: 10,
+      durationSeconds: 379,
+      errorMessage: null,
+      connected: true,
+      randomAvailable: true,
+    })
+    player.renderAudioAnalysis({
+      sequence: 1,
+      bands: Array.from({ length: 64 }, () => 220),
+      rms: 180,
+      peak: 240,
+    })
+    await setup.renderOnce()
+    expect(player.root.height).toBe(8)
+    expect(setup.captureCharFrame()).toMatch(/[▁▂▃▄▅▆▇█]{8,}/)
+
+    player.setVisualizerEnabled(false)
+    player.renderAudioAnalysis({
+      sequence: 2,
+      bands: Array.from({ length: 64 }, () => 255),
+      rms: 255,
+      peak: 255,
+    })
+    await setup.renderOnce()
+    expect(player.root.height).toBe(5)
+    expect(setup.captureCharFrame()).not.toMatch(/[▁▂▃▄▅▆▇█]{8,}/)
+
+    player.setVisualizerEnabled(true)
+    await setup.renderOnce()
+    expect(player.root.height).toBe(8)
+    expect(setup.captureCharFrame()).not.toMatch(/[▁▂▃▄▅▆▇█]{8,}/)
+
+    player.applyResponsiveLayout(80, true)
+    await setup.renderOnce()
+    expect(player.root.height).toBe(3)
     setup.renderer.destroy()
   })
 
@@ -101,6 +157,7 @@ describe("PlayerPanel", () => {
       durationSeconds: 379,
       errorMessage: null,
       connected: true,
+      randomAvailable: true,
     })
 
     await setup.renderOnce()
@@ -133,6 +190,7 @@ describe("PlayerPanel", () => {
       durationSeconds: null,
       errorMessage: "Apple Music playback did not start",
       connected: true,
+      randomAvailable: false,
     })
 
     await setup.renderOnce()
@@ -142,7 +200,30 @@ describe("PlayerPanel", () => {
     expect(frame).toContain("Apple Music playback did not start")
     expect(frame).toContain("0:00")
     expect(frame).toContain("--:--")
-    expect(frame).not.toContain("NEXT")
+    expect(frame).not.toContain("NEXT  ")
+    setup.renderer.destroy()
+  })
+
+  test("renders compact non-clickable transport icons", async () => {
+    const setup = await createTestRenderer({ width: 100, height: 8 })
+    const player = createPlayerPanel(setup.renderer)
+    setup.renderer.root.add(player.root)
+    player.render({
+      status: "playing",
+      currentTrack,
+      queue: [nextTrack],
+      positionSeconds: 0,
+      durationSeconds: 379,
+      errorMessage: null,
+      connected: true,
+      randomAvailable: true,
+    })
+
+    await setup.renderOnce()
+    const frame = setup.captureCharFrame()
+    expect(frame).toContain("│◀  ⇄  ▶│")
+    expect(frame).not.toContain("PREV b")
+    expect(frame).not.toContain("NEXT n")
     setup.renderer.destroy()
   })
 })

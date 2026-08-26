@@ -28,6 +28,29 @@ describe("parseOmarchyTheme", () => {
       muted: "#6c7086",
       accent: "#89b4fa",
       amber: "#f9e2af",
+      visualizerLow: "#89b4fa",
+      visualizerMid: "#f9e2af",
+      visualizerHigh: "#cdd6f4",
+      visualizerPeak: "#f9e2af",
+    })
+  })
+
+  test("accepts custom visualizer colors", () => {
+    const theme = parseOmarchyTheme(`
+      background = "#111111"
+      foreground = "#eeeeee"
+      accent = "#aaaaaa"
+      visualizer_low = "#112233"
+      visualizer_mid = "#445566"
+      visualizer_high = "#778899"
+      visualizer_peak = "#ffffff"
+    `)
+
+    expect(theme).toMatchObject({
+      visualizerLow: "#112233",
+      visualizerMid: "#445566",
+      visualizerHigh: "#778899",
+      visualizerPeak: "#ffffff",
     })
   })
 

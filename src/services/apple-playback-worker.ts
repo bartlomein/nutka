@@ -1,5 +1,6 @@
 import {
   MAX_PLAYBACK_MESSAGE_BYTES,
+  PLAYBACK_SPECTRUM_BAND_COUNT,
   decodePlaybackWorkerRequest,
   encodePlaybackMessage,
   type PlaybackWorkerRequest,
@@ -10,6 +11,7 @@ import {
   type PlaybackProbeBrowser,
   type PlaybackProbeSnapshot,
 } from "./apple-playback-probe"
+import { PipeWireSpectrumSource } from "./pipewire-audio-analysis"
 
 const START_TIMEOUT_MS = 30_000
 const CONTROL_TIMEOUT_MS = 10_000
@@ -22,6 +24,11 @@ let activeResourceIds: readonly string[] = []
 let confirmedStatus: "idle" | "playing" | "paused" = "idle"
 let commandRunning = false
 let shuttingDown = false
+let spectrumSource: PipeWireSpectrumSource | undefined
+let spectrumGeneration = 0
+let spectrumSequence = 0
+let spectrumEnabled = true
+let spectrumTransition: Promise<void> = Promise.resolve()
 
 const poll = setInterval(() => {
   if (!browser || commandRunning || shuttingDown) return
@@ -36,6 +43,7 @@ void readRequests().catch(() => void fatalShutdown())
 async function readRequests(): Promise<void> {
   const decoder = new TextDecoder("utf-8", { fatal: true })
   let buffer = ""
+  let requestQueue: Promise<void> = Promise.resolve()
   for await (const chunk of Bun.stdin.stream()) {
     buffer += decoder.decode(chunk, { stream: true })
     if (Buffer.byteLength(buffer, "utf8") > MAX_PLAYBACK_MESSAGE_BYTES && !buffer.includes("\n")) {
@@ -48,13 +56,35 @@ async function readRequests(): Promise<void> {
       if (line) {
         const request = decodePlaybackWorkerRequest(line)
         if (!request) throw new Error("invalid_message")
-        await handleRequest(request)
+        if (request.type === "set-audio-analysis-enabled") {
+          void handleAudioAnalysisRequest(request)
+        } else {
+          requestQueue = requestQueue.then(() => handleRequest(request))
+        }
       }
       newline = buffer.indexOf("\n")
     }
   }
   if (buffer.trim()) throw new Error("incomplete_message")
+  await requestQueue
   await shutdown()
+}
+
+async function handleAudioAnalysisRequest(
+  request: Extract<PlaybackWorkerRequest, { type: "set-audio-analysis-enabled" }>,
+): Promise<void> {
+  spectrumEnabled = request.enabled
+  try {
+    await reconcileSpectrumCapture()
+    send({ type: "result", requestId: request.requestId, ok: true })
+  } catch {
+    send({
+      type: "result",
+      requestId: request.requestId,
+      ok: false,
+      errorCode: "audio_analysis_failed",
+    })
+  }
 }
 
 async function handleRequest(request: PlaybackWorkerRequest): Promise<void> {
@@ -93,6 +123,7 @@ async function handleRequest(request: PlaybackWorkerRequest): Promise<void> {
           )
           confirmedStatus = "playing"
           await emitSnapshot()
+          await reconcileSpectrumCapture()
           send({ type: "result", requestId: request.requestId, ok: true })
           return
         } catch (error) {
@@ -131,6 +162,7 @@ async function handleRequest(request: PlaybackWorkerRequest): Promise<void> {
             activeResourceIds = []
             confirmedStatus = "idle"
           }
+          await reconcileSpectrumCapture()
           await emitSnapshot().catch(() => {})
           throw error
         }
@@ -140,6 +172,7 @@ async function handleRequest(request: PlaybackWorkerRequest): Promise<void> {
         await clickAndWait("pause", CONTROL_TIMEOUT_MS)
         await waitForSnapshot((snapshot) => snapshot.isPlaying === false, CONTROL_TIMEOUT_MS)
         confirmedStatus = "paused"
+        await reconcileSpectrumCapture()
         await emitSnapshot()
         send({ type: "result", requestId: request.requestId, ok: true })
         return
@@ -149,8 +182,32 @@ async function handleRequest(request: PlaybackWorkerRequest): Promise<void> {
         await waitForSnapshot((snapshot) => snapshot.isPlaying === true, CONTROL_TIMEOUT_MS)
         confirmedStatus = "playing"
         await emitSnapshot()
+        await reconcileSpectrumCapture()
         send({ type: "result", requestId: request.requestId, ok: true })
         return
+
+      case "previous":
+      case "next": {
+        const before = await requireBrowser().snapshot()
+        const currentIndex = activeResourceIds.indexOf(before.resourceId ?? "")
+        const targetIndex = currentIndex + (request.type === "previous" ? -1 : 1)
+        const targetResourceId = activeResourceIds[targetIndex]
+        if (!targetResourceId) throw new Error("queue_boundary")
+        await clickAndWait(request.type, CONTROL_TIMEOUT_MS)
+        const skipped = await waitForSnapshot(
+          (snapshot) => snapshot.resourceId === targetResourceId,
+          CONTROL_TIMEOUT_MS,
+        )
+        confirmedStatus = skipped.isPlaying === true
+          ? "playing"
+          : skipped.playbackState === 3
+            ? "paused"
+            : confirmedStatus
+        await reconcileSpectrumCapture()
+        await emitSnapshot()
+        send({ type: "result", requestId: request.requestId, ok: true })
+        return
+      }
 
       case "seek":
         await requireBrowser().seek(request.positionSeconds)
@@ -168,6 +225,7 @@ async function handleRequest(request: PlaybackWorkerRequest): Promise<void> {
         confirmedStatus = "idle"
         activeLoadId = null
         activeResourceIds = []
+        await reconcileSpectrumCapture()
         await emitSnapshot()
         send({ type: "result", requestId: request.requestId, ok: true })
         return
@@ -205,7 +263,7 @@ async function waitForSnapshot(
 }
 
 async function clickAndWait(
-  control: "play" | "pause" | "resume" | "stop",
+  control: "play" | "pause" | "resume" | "previous" | "next" | "stop",
   timeoutMs: number,
 ): Promise<PlaybackProbeSnapshot> {
   const activeBrowser = requireBrowser()
@@ -235,16 +293,23 @@ async function emitSnapshot(): Promise<void> {
 function reconcilePlaybackState(snapshot: PlaybackProbeSnapshot): void {
   if (commandRunning) return
   if (snapshot.isPlaying === true) {
+    const wasPlaying = confirmedStatus === "playing"
     confirmedStatus = "playing"
+    if (!wasPlaying) void reconcileSpectrumCapture()
     return
   }
   if ([0, 4, 10].includes(snapshot.playbackState ?? -1)) {
     confirmedStatus = "idle"
     activeLoadId = null
     activeResourceIds = []
+    void stopSpectrumCapture()
     return
   }
-  if (snapshot.playbackState === 3) confirmedStatus = "paused"
+  if (snapshot.playbackState === 3) {
+    const wasPlaying = confirmedStatus === "playing"
+    confirmedStatus = "paused"
+    if (wasPlaying) void reconcileSpectrumCapture()
+  }
 }
 
 async function commandErrorCode(error: unknown): Promise<string> {
@@ -289,6 +354,7 @@ function flushStdout(): Promise<void> {
 }
 
 async function closeBrowser(): Promise<void> {
+  await stopSpectrumCapture()
   const activeBrowser = browser
   if (!activeBrowser) return
   const processId = activeBrowser.processId
@@ -301,6 +367,80 @@ async function closeBrowser(): Promise<void> {
       process.kill(processId, "SIGKILL")
     } catch {}
   }
+}
+
+async function restartSpectrumCapture(loadId: number): Promise<void> {
+  const generation = ++spectrumGeneration
+  return queueSpectrumTransition(async () => {
+    if (generation !== spectrumGeneration) return
+    const previous = spectrumSource
+    spectrumSource = undefined
+    await previous?.stop().catch(() => {})
+    if (
+      shuttingDown ||
+      !spectrumEnabled ||
+      generation !== spectrumGeneration ||
+      activeLoadId !== loadId ||
+      confirmedStatus !== "playing"
+    ) return
+    const browserProcessId = browser?.processId
+    if (!browserProcessId) return
+
+    const source = new PipeWireSpectrumSource({
+      browserProcessId,
+      onFrame: (frame) => sendSpectrumFrame(loadId, frame),
+      onUnavailable: () => sendSpectrumFrame(loadId, {
+        bands: Array.from({ length: PLAYBACK_SPECTRUM_BAND_COUNT }, () => 0),
+        rms: 0,
+        peak: 0,
+      }),
+    })
+    spectrumSource = source
+    source.start()
+
+    function sendSpectrumFrame(
+      frameLoadId: number,
+      frame: { bands: readonly number[]; rms: number; peak: number },
+    ): void {
+      if (
+        shuttingDown ||
+        !spectrumEnabled ||
+        generation !== spectrumGeneration ||
+        source !== spectrumSource ||
+        activeLoadId !== frameLoadId ||
+        confirmedStatus !== "playing"
+      ) return
+      send({
+        type: "spectrum",
+        loadId: frameLoadId,
+        sequence: spectrumSequence++,
+        bands: frame.bands,
+        rms: frame.rms,
+        peak: frame.peak,
+      })
+    }
+  })
+}
+
+function reconcileSpectrumCapture(): Promise<void> {
+  return spectrumEnabled && confirmedStatus === "playing" && activeLoadId !== null
+    ? restartSpectrumCapture(activeLoadId)
+    : stopSpectrumCapture()
+}
+
+async function stopSpectrumCapture(): Promise<void> {
+  spectrumGeneration++
+  return queueSpectrumTransition(async () => {
+    const source = spectrumSource
+    spectrumSource = undefined
+    await source?.stop().catch(() => {})
+  })
+}
+
+function queueSpectrumTransition(operation: () => Promise<void>): Promise<void> {
+  const transition = spectrumTransition.then(operation, operation)
+  spectrumTransition = transition.catch(() => {})
+  return transition
 }
 
 function safeResourceId(value: string | null | undefined): string | null {

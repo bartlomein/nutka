@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { createTestRenderer, type TestRendererSetup } from "@opentui/core/testing"
 
 import type {
+  AudioSpectrumFrame,
   AppleCatalogAlbum,
   AppleCatalogPlaylist,
   AppleCatalogTrack,
@@ -168,11 +169,27 @@ class FakePlaybackController implements PlaybackController<AppleCatalogTrack> {
   }> = []
   pauseCount = 0
   resumeCount = 0
+  previousCount = 0
+  nextCount = 0
+  readonly analysisEnabledChanges: boolean[] = []
   readonly seekPositions: number[] = []
   disconnectCount = 0
   private readonly listeners = new Set<(
     snapshot: PlaybackSnapshot<AppleCatalogTrack>,
   ) => void>()
+  private readonly analysisListeners = new Set<(
+    frame: AudioSpectrumFrame | null,
+  ) => void>()
+  readonly audioAnalysis = {
+    subscribe: (listener: (frame: AudioSpectrumFrame | null) => void): (() => void) => {
+      this.analysisListeners.add(listener)
+      listener(null)
+      return () => this.analysisListeners.delete(listener)
+    },
+    setEnabled: async (enabled: boolean): Promise<void> => {
+      this.analysisEnabledChanges.push(enabled)
+    },
+  }
 
   subscribe(listener: (snapshot: PlaybackSnapshot<AppleCatalogTrack>) => void): () => void {
     this.listeners.add(listener)
@@ -193,6 +210,14 @@ class FakePlaybackController implements PlaybackController<AppleCatalogTrack> {
 
   async resume(): Promise<void> {
     this.resumeCount++
+  }
+
+  async previous(): Promise<void> {
+    this.previousCount++
+  }
+
+  async next(): Promise<void> {
+    this.nextCount++
   }
 
   async seek(positionSeconds: number): Promise<void> {
@@ -217,6 +242,10 @@ class FakePlaybackController implements PlaybackController<AppleCatalogTrack> {
   confirm(snapshot: PlaybackSnapshot<AppleCatalogTrack>): void {
     this.snapshot = snapshot
     for (const listener of this.listeners) listener(snapshot)
+  }
+
+  confirmAnalysis(frame: AudioSpectrumFrame | null): void {
+    for (const listener of this.analysisListeners) listener(frame)
   }
 }
 
@@ -456,6 +485,47 @@ describe("Nutka TUI", () => {
     expect(setup!.captureCharFrame()).not.toContain("First Track")
   })
 
+  test("plays a selected playlist randomly without opening it", async () => {
+    const playback = new FakePlaybackController()
+    const cursors: Array<string | undefined> = []
+    await createApp({
+      playback,
+      getRecommendedPlaylists: async () => ({
+        items: [recommendedPlaylists[1]!],
+        nextCursor: null,
+      }),
+      getLibraryPlaylists: async () => ({ items: [], nextCursor: null }),
+      getPlaylistTracks: async (_playlist, options) => {
+        cursors.push(options?.cursor)
+        return options?.cursor
+          ? { items: [catalogTracks[1]!], nextCursor: null }
+          : { items: [catalogTracks[0]!], nextCursor: "/next-tracks" }
+      },
+    })
+
+    app!.setAppleAuthStatus({ state: "signedIn", storefront: "us" })
+    await Bun.sleep(0)
+    setup!.mockInput.pressKey("g")
+    setup!.mockInput.pressKey("p")
+    setup!.mockInput.pressKey("r")
+    await Bun.sleep(0)
+    await Bun.sleep(0)
+    await setup!.renderOnce()
+
+    expect(cursors).toEqual([undefined, "/next-tracks"])
+    expect(playback.plays).toHaveLength(1)
+    expect([
+      playback.plays[0]!.track.id,
+      ...playback.plays[0]!.upcomingTracks.map((track) => track.id),
+    ].sort()).toEqual(["apple:song:1", "apple:song:2"])
+    expect(app!.getState().destination).toBe("playlists")
+    expect(app!.getState().lists.playlists.selectedTrackId).toBe(
+      recommendedPlaylists[1]!.id,
+    )
+    expect(setup!.captureCharFrame()).not.toContain("playlists  /  playlist")
+    expect(setup!.captureCharFrame()).not.toContain("First Track")
+  })
+
   test("loads the next page for the selected playlist section", async () => {
     const cursors: Array<string | undefined> = []
     await createApp({
@@ -614,6 +684,17 @@ describe("Nutka TUI", () => {
     expect(setup!.captureCharFrame()).toContain("NEXT  Second Track")
     expect(setup!.captureCharFrame()).toContain("AUDIO  LOSSLESS")
 
+    const stateBeforeAnalysis = app!.getState()
+    playback.confirmAnalysis({
+      sequence: 1,
+      bands: Array.from({ length: 64 }, (_, index) => index * 4),
+      rms: 160,
+      peak: 240,
+    })
+    await setup!.renderOnce()
+    expect(setup!.captureCharFrame()).toMatch(/[▁▂▃▄▅▆▇█]/)
+    expect(app!.getState()).toEqual(stateBeforeAnalysis)
+
     setup!.mockInput.pressArrow("right")
     await Bun.sleep(0)
     expect(playback.seekPositions).toEqual([17])
@@ -628,6 +709,16 @@ describe("Nutka TUI", () => {
     playback.confirm({ ...playback.snapshot, status: "paused", positionSeconds: 13 })
     setup!.mockInput.pressKey(" ")
     expect(playback.resumeCount).toBe(1)
+
+    setup!.mockInput.pressKey("n")
+    setup!.mockInput.pressKey("b")
+    setup!.mockInput.pressKey("r")
+    expect(playback.nextCount).toBe(1)
+    expect(playback.previousCount).toBe(1)
+    expect(playback.plays[1]?.track.id).toBe("apple:song:2")
+    expect(playback.plays[1]?.upcomingTracks.map((track) => track.id)).toEqual([
+      "apple:song:1",
+    ])
 
     setup!.mockInput.pressKey("g")
     setup!.mockInput.pressKey("q")
@@ -670,6 +761,43 @@ describe("Nutka TUI", () => {
     expect(playback.seekPositions.at(-1)).toBe(180)
   })
 
+  test("toggles visualizer rendering and analysis capture with v", async () => {
+    const playback = new FakePlaybackController()
+    await createApp({ playback })
+    playback.confirm({
+      status: "playing",
+      currentTrack: catalogTracks[0]!,
+      queue: [],
+      positionSeconds: 1,
+      durationSeconds: 180,
+      errorCode: null,
+    })
+    playback.confirmAnalysis({
+      sequence: 1,
+      bands: Array.from({ length: 64 }, () => 220),
+      rms: 180,
+      peak: 240,
+    })
+    await setup!.renderOnce()
+    expect(setup!.captureCharFrame()).toMatch(/[▁▂▃▄▅▆▇█]{8,}/)
+
+    setup!.mockInput.pressKey("v")
+    await setup!.renderOnce()
+    expect(playback.analysisEnabledChanges).toEqual([false])
+    expect(setup!.captureCharFrame()).not.toMatch(/[▁▂▃▄▅▆▇█]{8,}/)
+
+    setup!.mockInput.pressKey("v")
+    playback.confirmAnalysis({
+      sequence: 2,
+      bands: Array.from({ length: 64 }, () => 200),
+      rms: 170,
+      peak: 230,
+    })
+    await setup!.renderOnce()
+    expect(playback.analysisEnabledChanges).toEqual([false, true])
+    expect(setup!.captureCharFrame()).toMatch(/[▁▂▃▄▅▆▇█]{8,}/)
+  })
+
   test("disconnects confirmed playback when Apple authorization changes", async () => {
     const playback = new FakePlaybackController()
     await createApp({ playback })
@@ -710,6 +838,20 @@ describe("Nutka TUI", () => {
     expect(app!.getState().destination).toBe("queue")
     expect(app!.getState().mode.type).toBe("normal")
     expect(setup!.captureCharFrame()).toContain("queue is empty")
+  })
+
+  test("toggles the visualizer from the command palette", async () => {
+    const playback = new FakePlaybackController()
+    await createApp({ playback })
+
+    setup!.mockInput.pressKey("p", { ctrl: true })
+    await setup!.mockInput.typeText("visualizer")
+    await setup!.renderOnce()
+    expect(setup!.captureCharFrame()).toContain("Toggle visualizer")
+
+    setup!.mockInput.pressEnter()
+    expect(app!.getState().mode.type).toBe("normal")
+    expect(playback.analysisEnabledChanges).toEqual([false])
   })
 
   test("submits Apple search and keeps slash as a local result filter", async () => {
@@ -1021,6 +1163,7 @@ describe("Nutka TUI", () => {
     expect(setup!.captureCharFrame()).toContain("keyboard help")
     expect(setup!.captureCharFrame()).toContain("g l  library")
     expect(setup!.captureCharFrame()).toContain("i           item info")
+    expect(setup!.captureCharFrame()).toContain("v    visualizer")
     expect(setup!.captureCharFrame()).toContain("shift+←/→  seek 15s")
 
     setup!.mockInput.pressKey("q")
@@ -1047,12 +1190,36 @@ describe("Nutka TUI", () => {
     expect(frame).not.toContain("playlists")
   })
 
+  test("keeps track rows visible at the visualizer layout threshold", async () => {
+    await createApp({ width: 100, height: 18 })
+    await setup!.renderOnce()
+
+    expect(setup!.captureCharFrame()).toContain("First Track")
+  })
+
+  test("reclaims the visualizer rows for workspace content when disabled", async () => {
+    const tracks = Array.from({ length: 30 }, (_, index): Track => ({
+      id: `track-${index + 1}`,
+      title: `Track ${String(index + 1).padStart(2, "0")}`,
+      artist: "Artist",
+      album: "Album",
+      durationSeconds: 180,
+    }))
+    await createApp({ width: 100, height: 32, tracks })
+    await setup!.renderOnce()
+    expect(setup!.captureCharFrame()).not.toContain("Track 16")
+
+    setup!.mockInput.pressKey("v")
+    await setup!.renderOnce()
+    expect(setup!.captureCharFrame()).toContain("Track 16")
+  })
+
   test("keeps palette selection visible in a short terminal", async () => {
     let quitCount = 0
     await createApp({ width: 60, height: 12 }, () => quitCount++)
 
     setup!.mockInput.pressKey("p", { ctrl: true })
-    for (let index = 0; index < 7; index++) setup!.mockInput.pressArrow("down")
+    for (let index = 0; index < 8; index++) setup!.mockInput.pressArrow("down")
     await setup!.renderOnce()
     const frame = setup!.captureCharFrame()
 

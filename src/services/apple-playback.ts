@@ -2,6 +2,8 @@ import { rm } from "node:fs/promises"
 import { join } from "node:path"
 
 import type {
+  AudioAnalysisSource,
+  AudioSpectrumFrame,
   AppleCatalogTrack,
   PlaybackController,
   PlaybackSnapshot,
@@ -42,9 +44,12 @@ interface PlaybackWorkerInitialization {
 
 export interface PlaybackWorkerClient {
   initialize(options: PlaybackWorkerInitialization): Promise<void>
+  setAudioAnalysisEnabled(enabled: boolean): Promise<void>
   play(loadId: number, tracks: readonly PlaybackWorkerTrack[]): Promise<void>
   pause(): Promise<void>
   resume(): Promise<void>
+  previous(): Promise<void>
+  next(): Promise<void>
   seek(positionSeconds: number): Promise<void>
   stop(): Promise<void>
   dispose(): Promise<void>
@@ -60,6 +65,7 @@ export interface ApplePlaybackControllerOptions {
   createWorkerClient?: (
     onSnapshot: (snapshot: Extract<PlaybackWorkerResponse, { type: "snapshot" }>) => void,
     onExit: (errorCode: string) => void,
+    onSpectrum: (frame: Extract<PlaybackWorkerResponse, { type: "spectrum" }>) => void,
   ) => PlaybackWorkerClient
 }
 
@@ -74,8 +80,12 @@ const idleSnapshot: PlaybackSnapshot<AppleCatalogTrack> = {
 
 export class ApplePlaybackController implements PlaybackController<AppleCatalogTrack> {
   private currentSnapshot = idleSnapshot
+  private currentAnalysis: AudioSpectrumFrame | null = null
   private readonly listeners = new Set<(
     snapshot: PlaybackSnapshot<AppleCatalogTrack>,
+  ) => void>()
+  private readonly analysisListeners = new Set<(
+    frame: AudioSpectrumFrame | null,
   ) => void>()
   private readonly queues = new Map<number, readonly AppleCatalogTrack[]>()
   private worker?: PlaybackWorkerClient
@@ -84,11 +94,20 @@ export class ApplePlaybackController implements PlaybackController<AppleCatalogT
   private authorizationClearPromise?: Promise<void>
   private workerGeneration = 0
   private nextLoadId = 1
+  private activeLoadId: number | null = null
   private commandRunning = false
   private authorizationEnabled = true
+  private analysisEnabled = true
+  private analysisAcceptingFrames = true
+  private analysisControlVersion = 0
   private disposed = false
 
   constructor(private readonly options: ApplePlaybackControllerOptions) {}
+
+  readonly audioAnalysis: AudioAnalysisSource = {
+    subscribe: (listener) => this.subscribeAudioAnalysis(listener),
+    setEnabled: (enabled) => this.setAudioAnalysisEnabled(enabled),
+  }
 
   get snapshot(): PlaybackSnapshot<AppleCatalogTrack> {
     return this.currentSnapshot
@@ -99,7 +118,9 @@ export class ApplePlaybackController implements PlaybackController<AppleCatalogT
   ): () => void {
     if (this.disposed) return () => {}
     this.listeners.add(listener)
-    listener(this.currentSnapshot)
+    try {
+      listener(this.currentSnapshot)
+    } catch {}
     return () => this.listeners.delete(listener)
   }
 
@@ -112,6 +133,9 @@ export class ApplePlaybackController implements PlaybackController<AppleCatalogT
       const generation = this.workerGeneration
       const tracks = playableQueue(track, upcomingTracks)
       const loadId = this.nextLoadId++
+      this.activeLoadId = null
+      this.analysisAcceptingFrames = false
+      this.setAnalysis(null)
       this.queues.set(loadId, tracks)
       try {
         await (await this.getWorker()).play(
@@ -121,12 +145,14 @@ export class ApplePlaybackController implements PlaybackController<AppleCatalogT
             resourceId: item.apple.playParams!.id,
           })),
         )
+        this.analysisAcceptingFrames = this.analysisEnabled
         for (const knownLoadId of this.queues.keys()) {
           if (knownLoadId < loadId) this.queues.delete(knownLoadId)
         }
       } catch (error) {
         this.queues.delete(loadId)
         if (generation === this.workerGeneration) {
+          this.analysisAcceptingFrames = this.analysisEnabled
           this.setError(playbackErrorCode(error))
         }
         throw error
@@ -144,6 +170,18 @@ export class ApplePlaybackController implements PlaybackController<AppleCatalogT
     this.assertUsable()
     if (this.currentSnapshot.status !== "paused") return
     await this.runCommand(() => this.runControl((worker) => worker.resume()))
+  }
+
+  async previous(): Promise<void> {
+    this.assertUsable()
+    if (!this.hasPreviousTrack()) return
+    await this.runCommand(() => this.runControl((worker) => worker.previous()))
+  }
+
+  async next(): Promise<void> {
+    this.assertUsable()
+    if (this.currentSnapshot.queue.length === 0) return
+    await this.runCommand(() => this.runControl((worker) => worker.next()))
   }
 
   async seek(positionSeconds: number): Promise<void> {
@@ -176,6 +214,8 @@ export class ApplePlaybackController implements PlaybackController<AppleCatalogT
     this.worker = undefined
     this.workerPromise = undefined
     this.queues.clear()
+    this.activeLoadId = null
+    this.setAnalysis(null)
     this.setSnapshot(idleSnapshot)
     await worker?.dispose().catch(() => {})
     if (starting) {
@@ -217,6 +257,7 @@ export class ApplePlaybackController implements PlaybackController<AppleCatalogT
     await this.disconnect()
     this.disposed = true
     this.listeners.clear()
+    this.analysisListeners.clear()
   }
 
   private async getWorker(): Promise<PlaybackWorkerClient> {
@@ -257,6 +298,9 @@ export class ApplePlaybackController implements PlaybackController<AppleCatalogT
         (errorCode) => {
           if (generation === this.workerGeneration) this.handleWorkerExit(worker, errorCode)
         },
+        (frame) => {
+          if (generation === this.workerGeneration) this.handleWorkerSpectrum(frame)
+        },
       )
       await this.options.useMusicUserToken((musicUserToken) =>
         worker!.initialize({
@@ -267,6 +311,7 @@ export class ApplePlaybackController implements PlaybackController<AppleCatalogT
           musicUserToken,
         })
       )
+      if (!this.analysisEnabled) await worker.setAudioAnalysisEnabled(false)
       return worker
     } catch (error) {
       await worker?.dispose().catch(() => {})
@@ -280,6 +325,8 @@ export class ApplePlaybackController implements PlaybackController<AppleCatalogT
   ): void {
     if (this.disposed) return
     if (snapshot.status === "idle" || snapshot.loadId === null) {
+      this.activeLoadId = null
+      this.setAnalysis(null)
       this.setSnapshot({
         ...idleSnapshot,
         positionSeconds: snapshot.positionSeconds,
@@ -295,6 +342,7 @@ export class ApplePlaybackController implements PlaybackController<AppleCatalogT
     ) ?? -1
     const catalogTrack = tracks?.[currentIndex]
     if (!catalogTrack) return
+    this.activeLoadId = snapshot.loadId
     const currentTrack = snapshot.audioQuality
       ? { ...catalogTrack, audioQuality: snapshot.audioQuality }
       : catalogTrack
@@ -308,6 +356,23 @@ export class ApplePlaybackController implements PlaybackController<AppleCatalogT
     })
   }
 
+  private handleWorkerSpectrum(
+    frame: Extract<PlaybackWorkerResponse, { type: "spectrum" }>,
+  ): void {
+    if (
+      this.disposed ||
+      !this.analysisEnabled ||
+      !this.analysisAcceptingFrames ||
+      frame.loadId !== this.activeLoadId
+    ) return
+    this.setAnalysis({
+      sequence: frame.sequence,
+      bands: frame.bands,
+      rms: frame.rms,
+      peak: frame.peak,
+    })
+  }
+
   private handleWorkerExit(
     worker: PlaybackWorkerClient | undefined,
     errorCode: string,
@@ -315,7 +380,18 @@ export class ApplePlaybackController implements PlaybackController<AppleCatalogT
     if (this.worker === worker) this.worker = undefined
     if (this.disposed) return
     this.queues.clear()
+    this.activeLoadId = null
+    this.setAnalysis(null)
     this.setSnapshot({ ...idleSnapshot, errorCode })
+  }
+
+  private hasPreviousTrack(): boolean {
+    const currentTrackId = this.currentSnapshot.currentTrack?.id
+    if (this.activeLoadId === null || !currentTrackId) return false
+    const tracks = this.queues.get(this.activeLoadId)
+    return (tracks?.findIndex(
+      (track) => track.id === currentTrackId,
+    ) ?? -1) > 0
   }
 
   private async runControl(
@@ -346,7 +422,59 @@ export class ApplePlaybackController implements PlaybackController<AppleCatalogT
 
   private setSnapshot(snapshot: PlaybackSnapshot<AppleCatalogTrack>): void {
     this.currentSnapshot = snapshot
-    for (const listener of this.listeners) listener(snapshot)
+    for (const listener of this.listeners) {
+      try {
+        listener(snapshot)
+      } catch {}
+    }
+  }
+
+  private subscribeAudioAnalysis(
+    listener: (frame: AudioSpectrumFrame | null) => void,
+  ): () => void {
+    if (this.disposed) return () => {}
+    this.analysisListeners.add(listener)
+    try {
+      listener(this.currentAnalysis)
+    } catch {}
+    return () => this.analysisListeners.delete(listener)
+  }
+
+  private async setAudioAnalysisEnabled(enabled: boolean): Promise<void> {
+    this.assertUsable()
+    const version = ++this.analysisControlVersion
+    this.analysisEnabled = enabled
+    this.analysisAcceptingFrames = false
+    if (!enabled) this.setAnalysis(null)
+
+    const activeWorker = this.worker
+    const startingWorker = this.workerPromise
+    if (!activeWorker && !startingWorker) {
+      if (enabled && version === this.analysisControlVersion) {
+        this.analysisAcceptingFrames = true
+      }
+      return
+    }
+    const worker = activeWorker ?? await startingWorker!
+    if (
+      this.disposed ||
+      version !== this.analysisControlVersion ||
+      enabled !== this.analysisEnabled
+    ) return
+    await worker.setAudioAnalysisEnabled(enabled)
+    if (enabled && version === this.analysisControlVersion) {
+      this.analysisAcceptingFrames = true
+    }
+  }
+
+  private setAnalysis(frame: AudioSpectrumFrame | null): void {
+    if (frame === null && this.currentAnalysis === null) return
+    this.currentAnalysis = frame
+    for (const listener of this.analysisListeners) {
+      try {
+        listener(frame)
+      } catch {}
+    }
   }
 
   private assertUsable(): void {
@@ -372,6 +500,9 @@ class ProcessPlaybackWorkerClient implements PlaybackWorkerClient {
       snapshot: Extract<PlaybackWorkerResponse, { type: "snapshot" }>,
     ) => void,
     private readonly onExit: (errorCode: string) => void,
+    private readonly onSpectrum: (
+      frame: Extract<PlaybackWorkerResponse, { type: "spectrum" }>,
+    ) => void,
   ) {
     this.child = spawnPlaybackWorker()
     void this.readResponses()
@@ -384,6 +515,10 @@ class ProcessPlaybackWorkerClient implements PlaybackWorkerClient {
     return this.request({ type: "initialize", ...options }, INITIALIZE_TIMEOUT_MS)
   }
 
+  setAudioAnalysisEnabled(enabled: boolean): Promise<void> {
+    return this.request({ type: "set-audio-analysis-enabled", enabled }, CONTROL_TIMEOUT_MS)
+  }
+
   play(loadId: number, tracks: readonly PlaybackWorkerTrack[]): Promise<void> {
     return this.request({ type: "play", loadId, tracks }, PLAY_TIMEOUT_MS)
   }
@@ -394,6 +529,14 @@ class ProcessPlaybackWorkerClient implements PlaybackWorkerClient {
 
   resume(): Promise<void> {
     return this.request({ type: "resume" }, CONTROL_TIMEOUT_MS)
+  }
+
+  previous(): Promise<void> {
+    return this.request({ type: "previous" }, CONTROL_TIMEOUT_MS)
+  }
+
+  next(): Promise<void> {
+    return this.request({ type: "next" }, CONTROL_TIMEOUT_MS)
   }
 
   seek(positionSeconds: number): Promise<void> {
@@ -490,6 +633,10 @@ class ProcessPlaybackWorkerClient implements PlaybackWorkerClient {
       this.onSnapshot(response)
       return
     }
+    if (response.type === "spectrum") {
+      this.onSpectrum(response)
+      return
+    }
     const pending = this.pending.get(response.requestId)
     if (!pending) return
     clearTimeout(pending.timer)
@@ -532,8 +679,9 @@ interface PlaybackWorkerProcess {
 function createProcessPlaybackWorkerClient(
   onSnapshot: (snapshot: Extract<PlaybackWorkerResponse, { type: "snapshot" }>) => void,
   onExit: (errorCode: string) => void,
+  onSpectrum: (frame: Extract<PlaybackWorkerResponse, { type: "spectrum" }>) => void,
 ): PlaybackWorkerClient {
-  return new ProcessPlaybackWorkerClient(onSnapshot, onExit)
+  return new ProcessPlaybackWorkerClient(onSnapshot, onExit, onSpectrum)
 }
 
 function spawnPlaybackWorker(): PlaybackWorkerProcess {

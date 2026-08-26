@@ -33,6 +33,8 @@ import { theme } from "./theme"
 
 const maxTrackRows = 30
 const maxPaletteRows = 7
+const maxPlaybackQueueTracks = 100
+const maxPlaylistShufflePages = 4
 
 type CommandId =
   | "library"
@@ -46,6 +48,7 @@ type CommandId =
   | "apple-sign-out"
   | "apple-retry-restore"
   | "apple-cleanup"
+  | "visualizer"
   | "help"
   | "quit"
 
@@ -134,6 +137,13 @@ const commands: readonly Command[] = [
     description: "Remove login from this device",
     shortcut: "",
     keywords: "apple music logout sign out account",
+  },
+  {
+    id: "visualizer",
+    title: "Toggle visualizer",
+    description: "Show or hide audio visualization",
+    shortcut: "v",
+    keywords: "visualizer spectrum audio show hide toggle",
   },
   {
     id: "help",
@@ -240,6 +250,8 @@ export function createNutkaApp(
   let libraryPlaylistGeneration = 0
   let playlistTrackRequest: AbortController | undefined
   let playlistTrackGeneration = 0
+  let randomPlaylistRequest: AbortController | undefined
+  let randomPlaylistGeneration = 0
   let recommendationState: {
     status: "idle" | "loading" | "loadingMore" | "ready" | "error"
     nextCursor: string | null
@@ -269,6 +281,7 @@ export function createNutkaApp(
   let seekAnchorSeconds: number | null = null
   let seekRunning = false
   let infoTarget: InfoTarget | undefined
+  let visualizerEnabled = true
 
   const app = new BoxRenderable(renderer, {
     id: "app",
@@ -458,10 +471,11 @@ export function createNutkaApp(
   const helpLines = [
     ["GLOBAL", theme.accent],
     ["g l  library     g p  playlists     g s  search     g q  queue", theme.text],
-    ["ctrl+p  commands      ?    help         q    quit", theme.text],
+    ["ctrl+p  commands      v    visualizer   ? help   q quit", theme.text],
     ["", theme.text],
     ["LISTS", theme.accent],
     ["j/k or ↑/↓  move      enter  play or open", theme.text],
+    ["b/r/n       previous / random / next track", theme.text],
     ["i           item info /      filter", theme.text],
     ["←/→         seek 5s   shift+←/→  seek 15s", theme.text],
     ["esc         back to library or cancel pending g", theme.text],
@@ -597,6 +611,95 @@ export function createNutkaApp(
 
   function seekBy(deltaSeconds: number): void {
     requestSeek((seekAnchorSeconds ?? state.playback.positionSeconds) + deltaSeconds)
+  }
+
+  function playPreviousTrack(): void {
+    void options.playback?.previous().catch(() => {})
+  }
+
+  function playNextTrack(): void {
+    void options.playback?.next().catch(() => {})
+  }
+
+  function randomPlaybackTracks(): readonly AppleCatalogTrack[] {
+    const visibleTracks = getVisibleTracks().filter(isPlayableAppleTrack)
+    if (visibleTracks.length > 0) return visibleTracks
+
+    const playbackTracks = [
+      state.playback.currentTrackId
+        ? trackRegistry.get(state.playback.currentTrackId)
+        : undefined,
+      ...state.playback.queueTrackIds.map((trackId) => trackRegistry.get(trackId)),
+    ]
+    return playbackTracks.filter(isPlayableAppleTrack)
+  }
+
+  function selectedLandingPlaylist(): ApplePlaylist | undefined {
+    if (state.destination !== "playlists" || playlistView) return undefined
+    const selectedId = state.lists.playlists.selectedTrackId
+    return getVisiblePlaylists().find((playlist) => playlist.id === selectedId)
+  }
+
+  function playRandomTrack(): void {
+    if (!options.playback) return
+    if (selectedLandingPlaylist()) {
+      void playSelectedPlaylistRandom()
+      return
+    }
+    playTracksRandom(randomPlaybackTracks())
+  }
+
+  function playTracksRandom(tracks: readonly AppleCatalogTrack[]): void {
+    if (!options.playback || tracks.length === 0) return
+    const shuffled = [...tracks]
+    for (let index = shuffled.length - 1; index > 0; index--) {
+      const swapIndex = Math.floor(Math.random() * (index + 1))
+      const swapTrack = shuffled[index]!
+      shuffled[index] = shuffled[swapIndex]!
+      shuffled[swapIndex] = swapTrack
+    }
+    if (shuffled.length > 1 && shuffled[0]?.id === state.playback.currentTrackId) {
+      const alternativeIndex = shuffled.findIndex(
+        (track) => track.id !== state.playback.currentTrackId,
+      )
+      if (alternativeIndex > 0) {
+        const currentTrack = shuffled[0]!
+        shuffled[0] = shuffled[alternativeIndex]!
+        shuffled[alternativeIndex] = currentTrack
+      }
+    }
+    const selected = shuffled[0]
+    if (!selected) return
+    void options.playback.play(selected, shuffled.slice(1)).catch(() => {})
+  }
+
+  async function playSelectedPlaylistRandom(): Promise<void> {
+    const playlist = selectedLandingPlaylist()
+    if (!playlist || !options.playback || !options.onGetPlaylistTracks) return
+
+    const generation = ++randomPlaylistGeneration
+    randomPlaylistRequest?.abort()
+    const controller = new AbortController()
+    randomPlaylistRequest = controller
+    let tracks: readonly AppleCatalogTrack[] = []
+    let cursor: string | undefined
+    try {
+      for (let pageNumber = 0; pageNumber < maxPlaylistShufflePages; pageNumber++) {
+        const page = await options.onGetPlaylistTracks(playlist, {
+          ...(cursor ? { cursor } : {}),
+          signal: controller.signal,
+        })
+        if (controller.signal.aborted || generation !== randomPlaylistGeneration) return
+        tracks = appendUniqueTracks(tracks, page.items).slice(0, maxPlaybackQueueTracks)
+        cursor = page.nextCursor ?? undefined
+        if (!cursor || tracks.length === maxPlaybackQueueTracks) break
+      }
+      playTracksRandom(tracks.filter(isPlayableAppleTrack))
+    } catch {
+      // Playback remains unchanged when playlist tracks cannot be loaded.
+    } finally {
+      if (randomPlaylistRequest === controller) randomPlaylistRequest = undefined
+    }
   }
 
   async function drainSeekRequests(): Promise<void> {
@@ -1189,7 +1292,8 @@ export function createNutkaApp(
       state.destination === "playlists" ||
       state.mode.type === "search" ||
       Boolean(activeFilter)
-    const compactHeight = renderer.terminalHeight < 16
+    const compactHeight = renderer.terminalHeight < 21
+    const normalReservedRows = (showFilter ? 21 : 19) - (visualizerEnabled ? 0 : 3)
     const destinationName = destinationLabel(state.destination)
     const activeAlbumView = state.destination === "search" ? albumView : undefined
     const showingAlbum = activeAlbumView !== undefined
@@ -1293,7 +1397,7 @@ export function createNutkaApp(
       Math.min(
         maxTrackRows,
         renderer.terminalHeight -
-          (compactHeight ? (showFilter ? 10 : 9) : showFilter ? 18 : 16),
+          (compactHeight ? (showFilter ? 10 : 9) : normalReservedRows),
       ),
     )
     const rowStart = getRowStart(
@@ -1400,6 +1504,9 @@ export function createNutkaApp(
         ? playbackErrorMessage(state.playback.errorCode)
         : null,
       connected: Boolean(options.playback),
+      randomAvailable:
+        randomPlaybackTracks().length > 0 ||
+        Boolean(options.playback && options.onGetPlaylistTracks && selectedLandingPlaylist()),
     })
 
     paletteOverlay.visible = state.mode.type === "palette"
@@ -1456,9 +1563,9 @@ export function createNutkaApp(
     const compactHelpLines = [
       "ctrl+p commands · g l/p/s/q go",
       "↑/↓ move · i info · / fuzzy filter",
+      "b/r/n previous · random · next",
       "←/→ seek 5s · shift+←/→ 15s",
-      "s search · a album · m more · ? help",
-      "filter: type · enter apply · esc cancel",
+      "s search · a album · m more · v visualizer · ? help",
     ]
     helpTexts.forEach((line, index) => {
       line.visible = compactHelp ? index < compactHelpLines.length : true
@@ -1571,6 +1678,10 @@ export function createNutkaApp(
       case "apple-cleanup":
         dispatch({ type: "close-mode" })
         options.onAppleSignOut?.()
+        return
+      case "visualizer":
+        state = reduceAppState(state, { type: "close-mode" })
+        toggleVisualizer()
         return
       case "help":
         dispatch({ type: "open-help" })
@@ -1781,6 +1892,22 @@ export function createNutkaApp(
       }
       return
     }
+    if (isPlainKey(key, "b")) {
+      playPreviousTrack()
+      return
+    }
+    if (isPlainKey(key, "r")) {
+      playRandomTrack()
+      return
+    }
+    if (isPlainKey(key, "n")) {
+      playNextTrack()
+      return
+    }
+    if (isPlainKey(key, "v")) {
+      toggleVisualizer()
+      return
+    }
     if (
       !key.ctrl &&
       !key.meta &&
@@ -1879,7 +2006,7 @@ export function createNutkaApp(
 
   function applyResponsiveLayout(): void {
     const width = renderer.terminalWidth
-    const compactHeight = renderer.terminalHeight < 16
+    const compactHeight = renderer.terminalHeight < 21
     const compactAuth = renderer.terminalHeight < 14
     header.height = compactHeight ? 2 : 3
     header.paddingX = compactHeight ? 1 : 2
@@ -1925,6 +2052,14 @@ export function createNutkaApp(
     }
   }
 
+  function toggleVisualizer(): void {
+    visualizerEnabled = !visualizerEnabled
+    player.setVisualizerEnabled(visualizerEnabled)
+    void options.playback?.audioAnalysis?.setEnabled(visualizerEnabled).catch(() => {})
+    applyResponsiveLayout()
+    renderState()
+  }
+
   function handleResize(): void {
     applyResponsiveLayout()
     renderState()
@@ -1933,6 +2068,9 @@ export function createNutkaApp(
   renderer.keyInput.on("keypress", handleKeypress)
   renderer.on(CliRenderEvents.RESIZE, handleResize)
   const unsubscribePlayback = options.playback?.subscribe(syncPlayback)
+  const unsubscribeAudioAnalysis = options.playback?.audioAnalysis?.subscribe(
+    (frame) => player.renderAudioAnalysis(frame),
+  )
   applyResponsiveLayout()
   renderState()
 
@@ -1966,6 +2104,9 @@ export function createNutkaApp(
         playlistTrackGeneration++
         playlistTrackRequest?.abort()
         playlistTrackRequest = undefined
+        randomPlaylistGeneration++
+        randomPlaylistRequest?.abort()
+        randomPlaylistRequest = undefined
         recommendedPlaylists = []
         libraryPlaylists = []
         recommendationState = { status: "idle", nextCursor: null }
@@ -2014,9 +2155,12 @@ export function createNutkaApp(
       libraryPlaylistRequest?.abort()
       playlistTrackGeneration++
       playlistTrackRequest?.abort()
+      randomPlaylistGeneration++
+      randomPlaylistRequest?.abort()
       renderer.keyInput.off("keypress", handleKeypress)
       renderer.off(CliRenderEvents.RESIZE, handleResize)
       unsubscribePlayback?.()
+      unsubscribeAudioAnalysis?.()
       app.destroyRecursively()
     },
   }
@@ -2555,8 +2699,8 @@ function footerHelp(state: AppState, width = 120): string {
     return "l library   p playlists   s search   q queue   esc cancel"
   }
   if (width < 64) return "↑↓ move  enter play  i info  ←→ seek"
-  if (width < 100) return "j/k move  enter play  i info  space pause"
-  return "j/k move   enter play   i info   space pause/resume   ←/→ seek   / filter   ctrl+p commands"
+  if (width < 100) return "j/k move  enter play  b/r/n controls  space pause"
+  return "j/k move  enter play  b/r/n transport  space pause  ←/→ seek  / filter  ctrl+p commands"
 }
 
 function searchFooterHelp(hasMore: boolean, width: number): string {

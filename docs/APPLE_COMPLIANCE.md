@@ -42,6 +42,14 @@ strictly decoded, and worker failure clears playback state.
 Signing out waits for bounded worker teardown and deletes the dedicated profile
 so browser authorization is not retained across accounts.
 
+On Linux, the supervised playback worker may attach a read-only PipeWire capture
+link to Nutka's exact Chromium output stream for visualization. Decrypted PCM is
+processed only in bounded memory, is discarded immediately after frequency
+analysis, and is never written to disk, logged, cached, or sent to the TUI. The
+worker protocol carries only 64 normalized aggregate spectrum levels plus RMS
+and peak values. Capture failure is non-fatal and must never
+fall back to the microphone, another application, or the whole system output.
+
 ## Product constraints
 
 - Use documented MusicKit and Apple Music API behavior only.

@@ -68,6 +68,15 @@ The Linux worker passes with full-track playback and PipeWire audio.
 Signing out stops the worker and removes this dedicated profile; run
 `playback:authorize` again after signing back in.
 
+On Linux, the three-row spectrum visualizer analyzes Nutka's exact Chromium
+PipeWire stream. It does not capture the microphone, other applications, or the
+whole output device. The visualizer stays blank if PipeWire capture is
+unavailable and never affects playback. Press `v` to hide it and suspend audio
+analysis for the rest of the session; press `v` again to restore it. Set
+`NUTKA_THEME_PATH` to a custom
+Omarchy-compatible TOML theme and optionally define `visualizer_low`,
+`visualizer_mid`, `visualizer_high`, and `visualizer_peak` as `#RRGGBB` colors.
+
 ## Controls
 
 - `j`/`k` or arrow keys: move through tracks or playlists
@@ -75,10 +84,14 @@ Signing out stops the worker and removes this dedicated profile; run
 - `i`: inspect the selected track, playlist, or its loaded album/playlist context;
   use `j`/`k` or arrows to scroll and `i`/`Escape` to close
 - `Space`: pause or resume confirmed playback
+- `b`, `r`, `n`: play the previous track, a random visible track, or the next track;
+  the now-playing panel shows compact transport icons
+- `v`: toggle the visualizer and suspend or resume PipeWire audio analysis
 - `Ctrl+P`: open commands and navigation
 - `g l`, `g p`, `g s`, `g q`: go to Library, Playlists, Search, or Queue
 - Playlists: browse deduplicated For You and Your Library sections; press `Enter`
-  to open a playlist and `Escape` to return
+  to open a playlist, press `r` to shuffle-play the selected playlist without
+  opening it, and press `Escape` to return
 - Playlist tracks: press `Enter` to play the selected song and queue the visible
   songs after it; press `m` to load the next page when available
 - Search: type a query and press `Enter` to search Apple Music songs
@@ -96,8 +109,9 @@ Phase 4 Linux playback integration is complete. Nutka has no bundled catalog;
 Search loads real Apple Music songs and selected-song albums, Playlists loads
 personalized recommendations and saved library playlists, Library remains empty,
 and Queue shows the worker-confirmed upcoming songs. A supervised hidden
-Chromium worker provides real play, pause, resume, seek, stop, and now-playing
-updates without optimistic UI state. The token service supports real
+Chromium worker provides real play, pause, resume, previous, next, seek, stop,
+now-playing updates, and a PipeWire-driven spectrum without optimistic UI state.
+The token service supports real
 ES256 signing, a loopback-only MusicKit login, Apple session validation, secure
 OS-keyring persistence, and secret-safe diagnostics. Live authorization and
 restart restoration are verified.

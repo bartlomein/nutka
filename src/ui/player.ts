@@ -5,9 +5,10 @@ import {
   type MouseEvent,
 } from "@opentui/core"
 
-import type { PlaybackStatus, Track } from "../core/types"
+import type { AudioSpectrumFrame, PlaybackStatus, Track } from "../core/types"
 import { createAudioQualityBadge } from "./audio-quality"
 import { theme } from "./theme"
+import { createVisualizer, type VisualizerOptions } from "./visualizer"
 
 export interface PlayerPanelState {
   status: PlaybackStatus
@@ -17,16 +18,20 @@ export interface PlayerPanelState {
   durationSeconds: number | null
   errorMessage: string | null
   connected: boolean
+  randomAvailable: boolean
 }
 
 export interface PlayerPanel {
   root: BoxRenderable
   render(state: PlayerPanelState): void
+  renderAudioAnalysis(frame: AudioSpectrumFrame | null): void
+  setVisualizerEnabled(enabled: boolean): void
   applyResponsiveLayout(width: number, compactHeight: boolean): void
 }
 
 export interface PlayerPanelOptions {
   onSeek?: (positionSeconds: number) => void
+  visualizer?: VisualizerOptions
 }
 
 export function createPlayerPanel(
@@ -35,6 +40,7 @@ export function createPlayerPanel(
 ): PlayerPanel {
   let terminalWidth = renderer.terminalWidth
   let compactHeight = false
+  let visualizerEnabled = true
   let progressDuration: number | null = null
   let progressWidth = 4
   let progressBarOffset = 6
@@ -42,7 +48,7 @@ export function createPlayerPanel(
   const root = new BoxRenderable(renderer, {
     id: "now-playing",
     width: "100%",
-    height: 5,
+    height: 8,
     paddingX: 2,
     flexDirection: "column",
     border: ["top"],
@@ -66,6 +72,17 @@ export function createPlayerPanel(
   )
   metadata.add(details)
 
+  const visualizer = createVisualizer(renderer, options.visualizer ?? {
+    kind: "spectrum",
+    height: 3,
+    palette: {
+      low: theme.visualizerLow,
+      mid: theme.visualizerMid,
+      high: theme.visualizerHigh,
+      peak: theme.visualizerPeak,
+    },
+  })
+
   const progressRow = playerRow(renderer, "player-progress-row", "center")
   const progress = playerText(renderer, "player-progress", "", theme.muted)
   progress.onMouseDown = seekFromPointer
@@ -74,13 +91,32 @@ export function createPlayerPanel(
 
   const context = playerRow(renderer, "player-context")
   const next = playerText(renderer, "player-next", "", theme.muted)
+  const controls = new BoxRenderable(renderer, {
+    id: "player-controls",
+    width: 12,
+    height: 1,
+    flexDirection: "row",
+    justifyContent: "center",
+    columnGap: 2,
+  })
+  const previousControl = playerText(renderer, "player-previous", "│◀", theme.muted)
+  const randomControl = playerText(renderer, "player-random", "⇄", theme.muted)
+  const nextControl = playerText(renderer, "player-next-control", "▶│", theme.muted)
+  previousControl.width = 2
+  randomControl.width = 1
+  nextControl.width = 2
   const quality = createAudioQualityBadge(renderer)
   next.flexGrow = 1
+  controls.add(previousControl)
+  controls.add(randomControl)
+  controls.add(nextControl)
   context.add(next)
+  context.add(controls)
   context.add(quality.root)
 
   root.add(primary)
   root.add(metadata)
+  root.add(visualizer.root)
   root.add(progressRow)
   root.add(context)
 
@@ -106,6 +142,9 @@ export function createPlayerPanel(
     status.fg = statusColor
     progress.fg = statusColor
     title.fg = track ? theme.text : state.errorMessage ? theme.amber : theme.muted
+    previousControl.fg = track ? theme.accent : theme.muted
+    randomControl.fg = state.randomAvailable ? theme.accent : theme.muted
+    nextControl.fg = state.queue.length > 0 ? theme.accent : theme.muted
 
     status.content = state.errorMessage
       ? "×"
@@ -140,6 +179,20 @@ export function createPlayerPanel(
         ? "QUEUE  end of queue"
         : ""
     quality.render(track?.audioQuality ?? null)
+    visualizer.renderStatus(state.status)
+  }
+
+  function renderAudioAnalysis(frame: AudioSpectrumFrame | null): void {
+    if (!visualizerEnabled) return
+    visualizer.renderFrame(frame)
+  }
+
+  function setVisualizerEnabled(enabled: boolean): void {
+    if (enabled === visualizerEnabled) return
+    visualizerEnabled = enabled
+    if (!enabled) visualizer.renderFrame(null)
+    applyResponsiveLayout(terminalWidth, compactHeight)
+    renderer.requestRender()
   }
 
   function seekFromPointer(event: MouseEvent): void {
@@ -154,16 +207,23 @@ export function createPlayerPanel(
   function applyResponsiveLayout(width: number, isCompactHeight: boolean): void {
     terminalWidth = width
     compactHeight = isCompactHeight
-    root.height = compactHeight ? 3 : 5
+    root.height = compactHeight ? 3 : visualizerEnabled ? 8 : 5
     root.paddingX = compactHeight ? 1 : 2
     metadata.visible = !compactHeight
     context.visible = !compactHeight
     status.width = 3
     quality.applyResponsiveLayout(width, compactHeight)
+    visualizer.applyResponsiveLayout(width, compactHeight || !visualizerEnabled)
   }
 
   applyResponsiveLayout(terminalWidth, compactHeight)
-  return { root, render, applyResponsiveLayout }
+  return {
+    root,
+    render,
+    renderAudioAnalysis,
+    setVisualizerEnabled,
+    applyResponsiveLayout,
+  }
 }
 
 export function formatProgressLine(

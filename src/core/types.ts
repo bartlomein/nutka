@@ -154,12 +154,27 @@ export interface PlaybackSnapshot<TTrack extends Track = Track> {
   readonly errorCode: string | null
 }
 
+export interface AudioSpectrumFrame {
+  readonly sequence: number
+  readonly bands: readonly number[]
+  readonly rms: number
+  readonly peak: number
+}
+
+export interface AudioAnalysisSource {
+  subscribe(listener: (frame: AudioSpectrumFrame | null) => void): () => void
+  setEnabled(enabled: boolean): Promise<void>
+}
+
 export interface PlaybackController<TTrack extends Track = Track> {
   readonly snapshot: PlaybackSnapshot<TTrack>
+  readonly audioAnalysis?: AudioAnalysisSource
   subscribe(listener: (snapshot: PlaybackSnapshot<TTrack>) => void): () => void
   play(track: TTrack, upcomingTracks: readonly TTrack[]): Promise<void>
   pause(): Promise<void>
   resume(): Promise<void>
+  previous(): Promise<void>
+  next(): Promise<void>
   seek(positionSeconds: number): Promise<void>
   stop(): Promise<void>
   disconnect(): Promise<void>

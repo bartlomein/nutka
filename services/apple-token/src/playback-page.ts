@@ -11,6 +11,8 @@ export const PLAYBACK_HTML = `<!doctype html>
   <button id="play" type="button">Play</button>
   <button id="pause" type="button">Pause</button>
   <button id="resume" type="button">Resume</button>
+  <button id="previous" type="button">Previous</button>
+  <button id="next" type="button">Next</button>
   <button id="stop" type="button">Stop</button>
 </body>
 </html>`
@@ -114,6 +116,14 @@ export const PLAYBACK_JS = `(() => {
   document.querySelector("#resume").addEventListener("click", () => trigger(() => {
     if (!music) throw new Error("not_initialized");
     return run(() => music.play());
+  }));
+  document.querySelector("#previous").addEventListener("click", () => trigger(() => {
+    if (!music) throw new Error("not_initialized");
+    return run(() => music.skipToPreviousItem());
+  }));
+  document.querySelector("#next").addEventListener("click", () => trigger(() => {
+    if (!music) throw new Error("not_initialized");
+    return run(() => music.skipToNextItem());
   }));
   document.querySelector("#stop").addEventListener("click", () => trigger(() => {
     if (!music) throw new Error("not_initialized");

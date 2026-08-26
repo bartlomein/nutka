@@ -1,6 +1,7 @@
 import type { AudioQuality } from "../core/types"
 
 export const MAX_PLAYBACK_MESSAGE_BYTES = 64 * 1024
+export const PLAYBACK_SPECTRUM_BAND_COUNT = 64
 
 export interface PlaybackWorkerTrack {
   trackId: string
@@ -23,7 +24,8 @@ export type PlaybackWorkerRequest =
       loadId: number
       tracks: readonly PlaybackWorkerTrack[]
     }
-  | { type: "pause" | "resume" | "stop"; requestId: number }
+  | { type: "set-audio-analysis-enabled"; requestId: number; enabled: boolean }
+  | { type: "pause" | "resume" | "previous" | "next" | "stop"; requestId: number }
   | { type: "seek"; requestId: number; positionSeconds: number }
   | { type: "shutdown"; requestId: number }
 
@@ -43,6 +45,14 @@ export type PlaybackWorkerResponse =
       durationSeconds: number | null
       errorCode: string | null
       audioQuality: AudioQuality | null
+    }
+  | {
+      type: "spectrum"
+      loadId: number
+      sequence: number
+      bands: readonly number[]
+      rms: number
+      peak: number
     }
 
 export function encodePlaybackMessage(message: object): string {
@@ -72,7 +82,11 @@ export function decodePlaybackWorkerRequest(line: string): PlaybackWorkerRequest
     if (typeof value.positionSeconds !== "number" || !Number.isFinite(value.positionSeconds) || value.positionSeconds < 0) return null
     return value as unknown as PlaybackWorkerRequest
   }
-  if (["pause", "resume", "stop", "shutdown"].includes(value.type)) {
+  if (value.type === "set-audio-analysis-enabled") {
+    if (typeof value.enabled !== "boolean") return null
+    return value as unknown as PlaybackWorkerRequest
+  }
+  if (["pause", "resume", "previous", "next", "stop", "shutdown"].includes(value.type)) {
     return value as unknown as PlaybackWorkerRequest
   }
   return null
@@ -95,6 +109,16 @@ export function decodePlaybackWorkerResponse(line: string): PlaybackWorkerRespon
       !(value.durationSeconds === null || isFiniteNonNegative(value.durationSeconds)) ||
       !(value.errorCode === null || isSafeCode(value.errorCode)) ||
       !(value.audioQuality === null || isPlaybackAudioQuality(value.audioQuality))
+    ) return null
+    return value as unknown as PlaybackWorkerResponse
+  }
+  if (value.type === "spectrum") {
+    if (
+      !isSafeInteger(value.loadId) ||
+      !isSafeInteger(value.sequence) ||
+      !isByteArray(value.bands, PLAYBACK_SPECTRUM_BAND_COUNT) ||
+      !isByte(value.rms) ||
+      !isByte(value.peak)
     ) return null
     return value as unknown as PlaybackWorkerResponse
   }
@@ -126,6 +150,14 @@ function isPlaybackAudioQuality(value: unknown): value is AudioQuality {
 function isOptionalMetric(value: unknown, maximum: number): boolean {
   return value === undefined ||
     (typeof value === "number" && Number.isFinite(value) && value > 0 && value <= maximum)
+}
+
+function isByteArray(value: unknown, length: number): value is number[] {
+  return Array.isArray(value) && value.length === length && value.every(isByte)
+}
+
+function isByte(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 255
 }
 
 function parseObject(line: string): Record<string, unknown> | null {

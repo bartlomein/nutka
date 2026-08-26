@@ -153,6 +153,8 @@ describe("token service HTTP handler", () => {
     const script = await scriptResponse.text()
     expect(script).toContain("window.__nutkaPlayback")
     expect(script).toContain("music.setQueue(songResourceIds.length === 1")
+    expect(script).toContain("music.skipToPreviousItem()")
+    expect(script).toContain("music.skipToNextItem()")
     expect(script).toContain("music.musicUserToken = musicUserToken")
     expect(script).toContain("completedCommandSequence")
     expect(script).not.toContain("authorize()")

@@ -13,6 +13,10 @@ export interface NutkaTheme {
   muted: string
   accent: string
   amber: string
+  visualizerLow: string
+  visualizerMid: string
+  visualizerHigh: string
+  visualizerPeak: string
 }
 
 const fallbackTheme: NutkaTheme = {
@@ -26,6 +30,10 @@ const fallbackTheme: NutkaTheme = {
   muted: "#777A75",
   accent: "#9AAA76",
   amber: "#D09A5B",
+  visualizerLow: "#739A78",
+  visualizerMid: "#9AAA76",
+  visualizerHigh: "#D8D0C2",
+  visualizerPeak: "#D09A5B",
 }
 
 export function parseOmarchyTheme(source: string): NutkaTheme | null {
@@ -55,13 +63,17 @@ export function parseOmarchyTheme(source: string): NutkaTheme | null {
     muted: color("dark_foreground") ?? color("muted") ?? foreground,
     accent,
     amber: color("yellow") ?? accent,
+    visualizerLow: color("visualizer_low") ?? accent,
+    visualizerMid: color("visualizer_mid") ?? color("yellow") ?? accent,
+    visualizerHigh: color("visualizer_high") ?? foreground,
+    visualizerPeak: color("visualizer_peak") ?? color("yellow") ?? accent,
   }
 }
 
 function loadTheme(): NutkaTheme {
   const stateHome =
     process.env.XDG_STATE_HOME ?? join(homedir(), ".local", "state")
-  const themePath = join(
+  const themePath = process.env.NUTKA_THEME_PATH ?? join(
     stateHome,
     "omarchy",
     "current",

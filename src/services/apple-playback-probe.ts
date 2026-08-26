@@ -54,7 +54,13 @@ export interface PlaybackProbeSnapshot {
   audioQuality?: AudioQuality | null
 }
 
-export type PlaybackProbeControl = "play" | "pause" | "resume" | "stop"
+export type PlaybackProbeControl =
+  | "play"
+  | "pause"
+  | "resume"
+  | "previous"
+  | "next"
+  | "stop"
 
 export interface PlaybackProbeBrowser {
   readonly processId: number | null
@@ -506,7 +512,10 @@ export function applePlaybackProfilePath(
   return join(stateHome, "nutka", "chromium-profile")
 }
 
-async function isDescendantProcess(processId: number, ancestorId: number): Promise<boolean> {
+export async function isDescendantProcess(
+  processId: number,
+  ancestorId: number,
+): Promise<boolean> {
   let current = processId
   for (let depth = 0; depth < 32 && current > 1; depth++) {
     if (current === ancestorId) return true
