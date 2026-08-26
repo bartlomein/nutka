@@ -50,7 +50,7 @@ export const AUTHORIZE_JS = `(() => {
 
   async function connect() {
     if (!browserToken) {
-      message.textContent = "This authorization link is invalid. Return to Nuta and start again.";
+      message.textContent = "This authorization link is invalid. Return to Nutka and start again.";
       return;
     }
     message.textContent = "Connecting to the local authorization service...";
@@ -63,24 +63,24 @@ export const AUTHORIZE_JS = `(() => {
       });
       if (!response.ok) {
         message.textContent = [401, 409, 410].includes(response.status)
-          ? "This authorization link is invalid, expired, or already used. Return to Nuta and start again."
-          : "The local authorization service is unavailable. Return to Nuta and try again.";
+          ? "This authorization link is invalid, expired, or already used. Return to Nutka and start again."
+          : "The local authorization service is unavailable. Return to Nutka and try again.";
         return;
       }
       const claim = await response.json();
       csrfToken = claim.csrfToken;
       message.textContent = "Configuring Apple Music...";
       try {
-        await MusicKit.configure({ developerToken: claim.developerToken, app: { name: "Nuta", build: "1" } });
+        await MusicKit.configure({ developerToken: claim.developerToken, app: { name: "Nutka", build: "1" } });
       } catch {
-        message.textContent = "Apple Music could not be configured. Return to Nuta, cancel, and start again.";
+        message.textContent = "Apple Music could not be configured. Return to Nutka, cancel, and start again.";
         return;
       }
       trace("musickit_configured");
       button.hidden = false;
       message.textContent = "Connected. Click Authorize Apple Music to continue.";
     } catch {
-      message.textContent = "Could not connect to the local authorization service. Return to Nuta and try again.";
+      message.textContent = "Could not connect to the local authorization service. Return to Nutka and try again.";
     }
   }
 
@@ -95,11 +95,11 @@ export const AUTHORIZE_JS = `(() => {
       const code = safeErrorCode(error);
       trace("apple_approval_failed", code);
       button.disabled = false;
-      message.textContent = "Apple Music approval failed (" + code + "). You can try again or return to Nuta.";
+      message.textContent = "Apple Music approval failed (" + code + "). You can try again or return to Nutka.";
       return;
     }
 
-    message.textContent = "Sending authorization completion to Nuta...";
+    message.textContent = "Sending authorization completion to Nutka...";
     trace("completion_send_started");
     try {
       const response = await fetch("/v1/apple/auth/browser/complete", {
@@ -111,22 +111,22 @@ export const AUTHORIZE_JS = `(() => {
       if (!response.ok) {
         if (response.status === 409) {
           button.hidden = true;
-          message.textContent = "Authorization may already be complete. Return to Nuta and check the terminal.";
+          message.textContent = "Authorization may already be complete. Return to Nutka and check the terminal.";
           return;
         }
         if ([401, 410].includes(response.status)) {
           button.hidden = true;
-          message.textContent = "This session ended. Return to Nuta and start again.";
+          message.textContent = "This session ended. Return to Nutka and start again.";
           return;
         }
         throw new Error();
       }
       button.hidden = true;
-      message.textContent = "Authorization sent to Nuta. Return to the terminal and wait for confirmation.";
+      message.textContent = "Authorization sent to Nutka. Return to the terminal and wait for confirmation.";
     } catch {
       trace("completion_send_failed");
       button.disabled = false;
-      message.textContent = "Could not send authorization completion. Check the Nuta terminal; if it is still waiting, try again.";
+      message.textContent = "Could not send authorization completion. Check the Nutka terminal; if it is still waiting, try again.";
     }
   });
 

@@ -11,7 +11,7 @@ describe("developer token issuer", () => {
     )
 
     expect(await issuer.issue()).toEqual({
-      token: "nuta-local-mock-token",
+      token: "nutka-local-mock-token",
       expiresAt: "2023-11-14T22:28:20.000Z",
       mode: "mock",
     })
@@ -31,7 +31,7 @@ describe("developer token issuer", () => {
         keyId: "KEY123",
         privateKey: toPem(privateKey),
       },
-      allowedOrigin: "https://nuta.example",
+      allowedOrigin: "https://nutka.example",
     })
     const issuer = createDeveloperTokenIssuer(config, () => 1_700_000_000)
 
@@ -45,7 +45,7 @@ describe("developer token issuer", () => {
       iss: "TEAM123",
       iat: 1_700_000_000,
       exp: 1_700_000_900,
-      origin: "https://nuta.example",
+      origin: "https://nutka.example",
     })
     expect(Buffer.from(signature!, "base64url")).toHaveLength(64)
     expect(

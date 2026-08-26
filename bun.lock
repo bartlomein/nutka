@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "nuta",
+      "name": "nutka",
       "dependencies": {
         "@opentui/core": "^0.5.8",
         "puppeteer-core": "^25.9.0",

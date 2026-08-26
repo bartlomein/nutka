@@ -2,8 +2,8 @@ export {}
 
 import { createClientEnvironment } from "./client-environment"
 
-const host = process.env.NUTA_TOKEN_SERVICE_HOST ?? "127.0.0.1"
-const port = process.env.NUTA_TOKEN_SERVICE_PORT ?? "8787"
+const host = process.env.NUTKA_TOKEN_SERVICE_HOST ?? "127.0.0.1"
+const port = process.env.NUTKA_TOKEN_SERVICE_PORT ?? "8787"
 const serviceUrl = `http://${host}:${port}`
 const clientEnvironment = createClientEnvironment()
 
@@ -17,8 +17,8 @@ const service = Bun.spawn({
   cwd: process.cwd(),
   env: {
     ...process.env,
-    NUTA_TOKEN_SERVICE_HOST: host,
-    NUTA_TOKEN_SERVICE_PORT: port,
+    NUTKA_TOKEN_SERVICE_HOST: host,
+    NUTKA_TOKEN_SERVICE_PORT: port,
   },
   stdin: "ignore",
   stdout: "inherit",
@@ -43,7 +43,7 @@ try {
     cwd: process.cwd(),
     env: {
       ...clientEnvironment,
-      NUTA_TOKEN_SERVICE_URL: serviceUrl,
+      NUTKA_TOKEN_SERVICE_URL: serviceUrl,
     },
     stdin: "inherit",
     stdout: "inherit",

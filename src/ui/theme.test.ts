@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test"
 import { parseOmarchyTheme } from "./theme"
 
 describe("parseOmarchyTheme", () => {
-  test("maps Omarchy semantic colors to the Nuta interface", () => {
+  test("maps Omarchy semantic colors to the Nutka interface", () => {
     const theme = parseOmarchyTheme(`
       accent = "#89b4fa"
       selection = "#45475a"

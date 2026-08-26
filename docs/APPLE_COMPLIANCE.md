@@ -4,7 +4,7 @@ This document records engineering boundaries, not legal advice.
 
 ## Public source versus private deployment data
 
-The Nuta client and token-service implementation can be published as open
+The Nutka client and token-service implementation can be published as open
 source. The following must remain private and outside Git:
 
 - Apple Music private keys (`.p8`, `.pem`, or `.key`)
@@ -15,7 +15,7 @@ source. The following must remain private and outside Git:
 
 The client requests a short-lived developer token from the service. The local
 authorization broker passes a Music User Token from Apple-hosted MusicKit JS to
-the same machine through one-time loopback capabilities. Nuta validates it
+the same machine through one-time loopback capabilities. Nutka validates it
 before storing it in Linux Secret Service or macOS Keychain. There is no
 plaintext fallback.
 

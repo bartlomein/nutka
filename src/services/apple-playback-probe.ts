@@ -313,7 +313,7 @@ function classifySnapshotError(
 }
 
 type PlaybackPageGlobal = typeof globalThis & {
-  __nutaPlayback: {
+  __nutkaPlayback: {
     initialize(developerToken: string, musicUserToken: string): Promise<unknown>
     setQueue(resourceIds: readonly string[]): void
     snapshot(): PlaybackProbeSnapshot
@@ -326,7 +326,7 @@ export async function launchPuppeteerPlaybackBrowser(
   playbackUrl: string,
   persistentProfilePath?: string,
 ): Promise<PlaybackProbeBrowser> {
-  const profilePath = persistentProfilePath ?? await mkdtemp(join(tmpdir(), "nuta-playback-"))
+  const profilePath = persistentProfilePath ?? await mkdtemp(join(tmpdir(), "nutka-playback-"))
   if (persistentProfilePath) {
     await mkdir(profilePath, { recursive: true })
   }
@@ -362,7 +362,7 @@ export async function launchPuppeteerPlaybackBrowser(
       throw new Error("untrusted_playback_origin")
     }
     await page.waitForFunction(
-      "typeof window.__nutaPlayback === 'object'",
+      "typeof window.__nutkaPlayback === 'object'",
       { timeout: PAGE_READY_TIMEOUT_MS },
     )
     return new PuppeteerPlaybackBrowser(
@@ -402,7 +402,7 @@ class PuppeteerPlaybackBrowser implements PlaybackProbeBrowser {
     }
     await this.page.evaluate(
       async ({ developerToken, musicUserToken }) => {
-        const playback = (globalThis as PlaybackPageGlobal).__nutaPlayback
+        const playback = (globalThis as PlaybackPageGlobal).__nutkaPlayback
         await playback.initialize(developerToken, musicUserToken)
       },
       { developerToken, musicUserToken },
@@ -411,7 +411,7 @@ class PuppeteerPlaybackBrowser implements PlaybackProbeBrowser {
 
   async setQueue(resourceIds: readonly string[]): Promise<void> {
     await this.page.evaluate((ids) => {
-      ;(globalThis as PlaybackPageGlobal).__nutaPlayback.setQueue(ids)
+      ;(globalThis as PlaybackPageGlobal).__nutkaPlayback.setQueue(ids)
     }, [...resourceIds])
   }
 
@@ -421,13 +421,13 @@ class PuppeteerPlaybackBrowser implements PlaybackProbeBrowser {
 
   async seek(positionSeconds: number): Promise<void> {
     await this.page.evaluate(async (position) => {
-      await (globalThis as PlaybackPageGlobal).__nutaPlayback.seek(position)
+      await (globalThis as PlaybackPageGlobal).__nutkaPlayback.seek(position)
     }, positionSeconds)
   }
 
   async snapshot(): Promise<PlaybackProbeSnapshot> {
     const snapshot = await this.page.evaluate(
-      () => (globalThis as PlaybackPageGlobal).__nutaPlayback.snapshot(),
+      () => (globalThis as PlaybackPageGlobal).__nutkaPlayback.snapshot(),
     )
     return { ...snapshot, audioQuality: this.audioQuality.quality }
   }
@@ -503,7 +503,7 @@ export function applePlaybackProfilePath(
   environment: NodeJS.ProcessEnv = process.env,
 ): string {
   const stateHome = environment.XDG_STATE_HOME || join(homedir(), ".local", "state")
-  return join(stateHome, "nuta", "chromium-profile")
+  return join(stateHome, "nutka", "chromium-profile")
 }
 
 async function isDescendantProcess(processId: number, ancestorId: number): Promise<boolean> {

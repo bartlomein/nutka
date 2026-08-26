@@ -1,19 +1,19 @@
-# Nuta
+# Nutka
 
 Open-source music in your terminal.
 
 ## Current state
 
-- Project name: **Nuta**
-- Repository/folder: `nuta`
-- CLI command: `nuta`
+- Project name: **Nutka**
+- Repository/folder: `nutka`
+- CLI command: `nutka`
 - Status: Phase 4 complete on Linux; real catalog playback is connected to the TUI
 - First provider: Apple Music
 - Future providers: Spotify, Tidal, and others behind the same provider interface
 
 ## Product rules
 
-1. Nuta is a real terminal application built with OpenTUI.
+1. Nutka is a real terminal application built with OpenTUI.
 2. Normal use must never show a browser window.
 3. A visible browser is acceptable only when a provider requires interactive login.
 4. Playback may use a hidden background browser process if Apple Music requires MusicKit JS.
@@ -23,7 +23,7 @@ Open-source music in your terminal.
 
 The first useful version should let a user:
 
-- run `nuta`
+- run `nutka`
 - sign in to Apple Music once
 - search the Apple Music catalog
 - move through results with `j`/`k` or arrow keys
@@ -57,7 +57,7 @@ Status: **complete**
 - create a Bun + TypeScript project
 - install OpenTUI
 - add the minimal source layout, scripts, `.gitignore`, README, and license
-- run a blank Nuta screen successfully
+- run a blank Nutka screen successfully
 
 ### Phase 2 — TUI foundation
 
@@ -105,7 +105,7 @@ MusicKit through a private pipe and the TUI renders only worker-confirmed state.
 
 - add Apple Music library albums, artists, and songs
 - harden and package login persistence across supported platforms
-- package the `nuta` executable
+- package the `nutka` executable
 - add macOS and Linux CI builds, then test Windows
 
 ## Important risks
@@ -121,7 +121,7 @@ service or another Apple-approved token strategy.
 
 Apple officially supports playback through MusicKit on the Web, but protected
 audio may depend on browser DRM components that are not present in a bundled
-headless Chromium build. Phase 4 must prove this on Linux before Nuta commits to
+headless Chromium build. Phase 4 must prove this on Linux before Nutka commits to
 a playback implementation.
 
 ## Immediate next action

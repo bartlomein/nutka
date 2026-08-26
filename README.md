@@ -1,8 +1,8 @@
-# Nuta
+# Nutka
 
 Open-source music in your terminal.
 
-Nuta is a keyboard-first terminal music player. Apple Music is the first
+Nutka is a keyboard-first terminal music player. Apple Music is the first
 provider; other services can be added behind the same provider interface later.
 
 ## Requirements
@@ -18,7 +18,7 @@ bun run dev
 ```
 
 This starts the empty TUI shell and needs no service or Apple credentials.
-On Omarchy, Nuta reads the active theme colors at startup and matches apps using
+On Omarchy, Nutka reads the active theme colors at startup and matches apps using
 the system theme, including OpenCode.
 
 To run the local token-service connection as well:
@@ -27,25 +27,25 @@ To run the local token-service connection as well:
 bun run dev:apple
 ```
 
-That command starts the token service, waits for it, then starts Nuta. It shuts
-the service down when Nuta exits. Real Apple signing and browser-assisted login
+That command starts the token service, waits for it, then starts Nutka. It shuts
+the service down when Nutka exits. Real Apple signing and browser-assisted login
 are enabled through private environment variables documented in
 [`services/apple-token/README.md`](services/apple-token/README.md).
 
 With real Apple credentials configured, open `Ctrl+P` and run
-`Sign in to Apple Music`. Nuta opens a localhost page for Apple authorization,
+`Sign in to Apple Music`. Nutka opens a localhost page for Apple authorization,
 connects that page automatically through a one-time URL fragment, validates the
 resulting session, and stores it in Secret Service on Linux or Keychain on
 macOS. No pairing code or plaintext credential fallback is used.
 
 Authorization diagnostics are written to
-`~/.local/state/nuta/auth.log` (or `$XDG_STATE_HOME/nuta/auth.log`) with `0600`
+`~/.local/state/nutka/auth.log` (or `$XDG_STATE_HOME/nutka/auth.log`) with `0600`
 permissions. The rotating structured log contains only stages, sanitized error
 codes, and HTTP statuses; it never records URLs, headers, request bodies,
 developer tokens, session capabilities, or Music User Tokens. Set
-`NUTA_AUTH_LOG=off` to disable it.
+`NUTKA_AUTH_LOG=off` to disable it.
 
-To authorize Nuta's private Chromium profile once, run this while `dev:apple` is
+To authorize Nutka's private Chromium profile once, run this while `dev:apple` is
 running:
 
 ```sh
@@ -63,7 +63,7 @@ bun run playback:probe
 Authorization opens one visible browser window. Normal playback and the probe
 then use the system `/usr/bin/chromium`, download no browser, and open no window.
 The probe tests one real song for 36 seconds plus pause, resume, seek, and stop.
-Set `NUTA_CHROMIUM_PATH` to select another installed Chrome-compatible browser.
+Set `NUTKA_CHROMIUM_PATH` to select another installed Chrome-compatible browser.
 The Linux worker passes with full-track playback and PipeWire audio.
 Signing out stops the worker and removes this dedicated profile; run
 `playback:authorize` again after signing back in.
@@ -92,7 +92,7 @@ Signing out stops the worker and removes this dedicated profile; run
 
 ## Current status
 
-Phase 4 Linux playback integration is complete. Nuta has no bundled catalog;
+Phase 4 Linux playback integration is complete. Nutka has no bundled catalog;
 Search loads real Apple Music songs and selected-song albums, Playlists loads
 personalized recommendations and saved library playlists, Library remains empty,
 and Queue shows the worker-confirmed upcoming songs. A supervised hidden

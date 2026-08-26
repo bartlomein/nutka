@@ -9,8 +9,8 @@ import {
 } from "../src/services/apple-playback-probe"
 import { createCredentialStore } from "../src/services/credentials"
 
-const serviceUrl = process.env.NUTA_TOKEN_SERVICE_URL ?? "http://127.0.0.1:8787"
-const executablePath = process.env.NUTA_CHROMIUM_PATH ?? "/usr/bin/chromium"
+const serviceUrl = process.env.NUTKA_TOKEN_SERVICE_URL ?? "http://127.0.0.1:8787"
+const executablePath = process.env.NUTKA_CHROMIUM_PATH ?? "/usr/bin/chromium"
 const profilePath = applePlaybackProfilePath()
 let browser: Browser | undefined
 
@@ -36,7 +36,7 @@ const auth = new AppleAuthManager({
 })
 
 try {
-  console.log("Opening Nuta's dedicated Chromium profile...")
+  console.log("Opening Nutka's dedicated Chromium profile...")
   console.log("Complete Apple Music approval in the browser window.")
   await auth.signIn()
   if (auth.status.state !== "signedIn") throw new Error()

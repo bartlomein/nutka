@@ -144,14 +144,14 @@ const commands: readonly Command[] = [
   },
   {
     id: "quit",
-    title: "Quit Nuta",
+    title: "Quit Nutka",
     description: "Close the player",
     shortcut: "q",
     keywords: "quit exit close",
   },
 ]
 
-interface NutaAppOptions {
+interface NutkaAppOptions {
   tracks: readonly Track[]
   onQuit: () => void
   onSearchSongs?: (
@@ -207,16 +207,16 @@ interface PaletteRow {
   shortcut: TextRenderable
 }
 
-export interface NutaApp {
+export interface NutkaApp {
   getState(): AppState
   setAppleAuthStatus(status: AppleAuthStatus): void
   destroy(): void
 }
 
-export function createNutaApp(
+export function createNutkaApp(
   renderer: CliRenderer,
-  options: NutaAppOptions,
-): NutaApp {
+  options: NutkaAppOptions,
+): NutkaApp {
   let state = createInitialState(options.tracks.map((track) => track.id))
   const libraryTracks = [...options.tracks]
   let searchTracks: readonly Track[] = []
@@ -290,7 +290,7 @@ export function createNutaApp(
     borderColor: theme.border,
     backgroundColor: theme.surface,
   })
-  const breadcrumb = text(renderer, "breadcrumb", "nuta  /  library", theme.text)
+  const breadcrumb = text(renderer, "breadcrumb", "nutka  /  library", theme.text)
   const providerStatus = text(
     renderer,
     "provider-status",
@@ -1197,10 +1197,10 @@ export function createNutaApp(
     const showingPlaylist = activePlaylistView !== undefined
 
     breadcrumb.content = showingPlaylist
-      ? "nuta  /  playlists  /  playlist"
+      ? "nutka  /  playlists  /  playlist"
       : showingAlbum
-      ? "nuta  /  search  /  album"
-      : `nuta  /  ${destinationName.toLowerCase()}`
+      ? "nutka  /  search  /  album"
+      : `nutka  /  ${destinationName.toLowerCase()}`
     workspaceTitle.content =
       activePlaylistView
         ? activePlaylistView.playlist.title

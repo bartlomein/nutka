@@ -1,11 +1,11 @@
 {
-  "name": "nuta",
+  "name": "nutka",
   "version": "0.0.1",
   "description": "Open-source music in your terminal.",
   "type": "module",
   "private": true,
   "bin": {
-    "nuta": "src/index.ts"
+    "nutka": "src/index.ts"
   },
   "scripts": {
     "dev": "bun run scripts/run.ts",

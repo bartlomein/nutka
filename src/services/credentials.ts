@@ -6,6 +6,14 @@ const MAX_ENCODED_OUTPUT_BYTES = Math.ceil((MAX_TOKEN_BYTES * 4) / 3) + 2
 const LINUX_TOOL = "/usr/bin/secret-tool"
 const LINUX_ATTRIBUTES = [
   "application",
+  "nutka",
+  "credential",
+  "apple-music-user-token",
+  "version",
+  "1",
+] as const
+const LEGACY_LINUX_ATTRIBUTES = [
+  "application",
   "nuta",
   "credential",
   "apple-music-user-token",
@@ -14,7 +22,8 @@ const LINUX_ATTRIBUTES = [
 ] as const
 
 const MACOS_TOOL = "/usr/bin/security"
-const MACOS_SERVICE = "dev.nuta.cli"
+const MACOS_SERVICE = "dev.nutka.cli"
+const LEGACY_MACOS_SERVICE = "dev.nuta.cli"
 const MACOS_ACCOUNT = "apple-music-user-token.v1"
 
 export interface CredentialStore {
@@ -78,10 +87,28 @@ export function createCredentialStore(
   )
 
   if (platform === "linux") {
-    return createLinuxStore(runner, timeoutMs, environment)
+    return createMigratingStore(
+      createLinuxStore(
+        runner,
+        timeoutMs,
+        environment,
+        LINUX_ATTRIBUTES,
+        "Nutka Apple Music",
+      ),
+      createLinuxStore(
+        runner,
+        timeoutMs,
+        environment,
+        LEGACY_LINUX_ATTRIBUTES,
+        "Nuta Apple Music",
+      ),
+    )
   }
   if (platform === "darwin") {
-    return createMacOSStore(runner, timeoutMs, environment)
+    return createMigratingStore(
+      createMacOSStore(runner, timeoutMs, environment, MACOS_SERVICE),
+      createMacOSStore(runner, timeoutMs, environment, LEGACY_MACOS_SERVICE),
+    )
   }
   throw new CredentialStoreError("unsupported_platform")
 }
@@ -90,6 +117,8 @@ function createLinuxStore(
   runner: ProcessRunner,
   timeoutMs: number,
   env: Readonly<Record<string, string>>,
+  attributes: readonly string[],
+  label: string,
 ): CredentialStore {
   return {
     async load() {
@@ -97,7 +126,7 @@ function createLinuxStore(
         runner,
         {
           executable: LINUX_TOOL,
-          args: ["lookup", ...LINUX_ATTRIBUTES],
+          args: ["lookup", ...attributes],
           timeoutMs,
           maxStdoutBytes: MAX_RAW_OUTPUT_BYTES,
           env,
@@ -115,7 +144,7 @@ function createLinuxStore(
         runner,
         {
           executable: LINUX_TOOL,
-          args: ["store", "--label=Nuta Apple Music", ...LINUX_ATTRIBUTES],
+          args: ["store", `--label=${label}`, ...attributes],
           stdin: bytes,
           timeoutMs,
           maxStdoutBytes: 1,
@@ -131,7 +160,7 @@ function createLinuxStore(
         runner,
         {
           executable: LINUX_TOOL,
-          args: ["clear", ...LINUX_ATTRIBUTES],
+          args: ["clear", ...attributes],
           timeoutMs,
           maxStdoutBytes: 1,
           env,
@@ -147,6 +176,7 @@ function createMacOSStore(
   runner: ProcessRunner,
   timeoutMs: number,
   env: Readonly<Record<string, string>>,
+  service: string,
 ): CredentialStore {
   return {
     async load() {
@@ -157,7 +187,7 @@ function createMacOSStore(
           args: [
             "find-generic-password",
             "-s",
-            MACOS_SERVICE,
+            service,
             "-a",
             MACOS_ACCOUNT,
             "-w",
@@ -194,7 +224,7 @@ function createMacOSStore(
         throw new CredentialStoreError("invalid_data")
       }
 
-      const command = `add-generic-password -U -s ${MACOS_SERVICE} -a ${MACOS_ACCOUNT} -w ${encoded}\n`
+      const command = `add-generic-password -U -s ${service} -a ${MACOS_ACCOUNT} -w ${encoded}\n`
       const result = await run(
         runner,
         {
@@ -218,7 +248,7 @@ function createMacOSStore(
           args: [
             "delete-generic-password",
             "-s",
-            MACOS_SERVICE,
+            service,
             "-a",
             MACOS_ACCOUNT,
           ],
@@ -229,6 +259,43 @@ function createMacOSStore(
         "delete",
       )
       if (result.exitCode !== 0 && result.exitCode !== 44) requireSuccess(result)
+    },
+  }
+}
+
+function createMigratingStore(
+  current: CredentialStore,
+  legacy: CredentialStore,
+): CredentialStore {
+  return {
+    async load() {
+      const currentToken = await current.load()
+      if (currentToken !== null) return currentToken
+
+      const legacyToken = await legacy.load()
+      if (legacyToken === null) return null
+      await current.save(legacyToken)
+      await legacy.delete()
+      return legacyToken
+    },
+
+    save(token) {
+      return current.save(token)
+    },
+
+    async delete() {
+      let failure: unknown
+      try {
+        await current.delete()
+      } catch (error) {
+        failure = error
+      }
+      try {
+        await legacy.delete()
+      } catch (error) {
+        failure ??= error
+      }
+      if (failure) throw failure
     },
   }
 }

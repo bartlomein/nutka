@@ -7,8 +7,8 @@ import {
 } from "../src/services/apple-playback-probe"
 import { createCredentialStore } from "../src/services/credentials"
 
-const serviceUrl = process.env.NUTA_TOKEN_SERVICE_URL ?? "http://127.0.0.1:8787"
-const executablePath = process.env.NUTA_CHROMIUM_PATH ?? "/usr/bin/chromium"
+const serviceUrl = process.env.NUTKA_TOKEN_SERVICE_URL ?? "http://127.0.0.1:8787"
+const executablePath = process.env.NUTKA_CHROMIUM_PATH ?? "/usr/bin/chromium"
 const query = process.argv.slice(2).join(" ").trim() || "Massive Attack Angel"
 const cancellation = new AbortController()
 process.once("SIGINT", () => cancellation.abort())

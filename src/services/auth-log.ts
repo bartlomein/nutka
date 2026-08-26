@@ -64,10 +64,10 @@ export function createAuthLogger(
 export function authLogPath(
   environment: NodeJS.ProcessEnv = process.env,
 ): string | undefined {
-  if (environment.NUTA_AUTH_LOG === "off") return undefined
-  if (environment.NUTA_AUTH_LOG) return environment.NUTA_AUTH_LOG
+  if (environment.NUTKA_AUTH_LOG === "off") return undefined
+  if (environment.NUTKA_AUTH_LOG) return environment.NUTKA_AUTH_LOG
   const stateHome = environment.XDG_STATE_HOME
-  if (stateHome) return join(stateHome, "nuta", "auth.log")
+  if (stateHome) return join(stateHome, "nutka", "auth.log")
   const home = environment.HOME
-  return home ? join(home, ".local", "state", "nuta", "auth.log") : undefined
+  return home ? join(home, ".local", "state", "nutka", "auth.log") : undefined
 }

@@ -21,18 +21,18 @@ export async function loadTokenServiceConfig(
   env: Environment = process.env,
   readTextFile: ReadTextFile = (path) => Bun.file(path).text(),
 ): Promise<TokenServiceConfig> {
-  const mode = parseMode(env.NUTA_TOKEN_SERVICE_MODE)
+  const mode = parseMode(env.NUTKA_TOKEN_SERVICE_MODE)
   const config: TokenServiceConfig = {
     mode,
-    host: env.NUTA_TOKEN_SERVICE_HOST?.trim() || "127.0.0.1",
-    port: parseInteger("NUTA_TOKEN_SERVICE_PORT", env.NUTA_TOKEN_SERVICE_PORT, {
+    host: env.NUTKA_TOKEN_SERVICE_HOST?.trim() || "127.0.0.1",
+    port: parseInteger("NUTKA_TOKEN_SERVICE_PORT", env.NUTKA_TOKEN_SERVICE_PORT, {
       defaultValue: 8787,
       min: 1,
       max: 65_535,
     }),
     rateLimitPerMinute: parseInteger(
-      "NUTA_RATE_LIMIT_PER_MINUTE",
-      env.NUTA_RATE_LIMIT_PER_MINUTE,
+      "NUTKA_RATE_LIMIT_PER_MINUTE",
+      env.NUTKA_RATE_LIMIT_PER_MINUTE,
       { defaultValue: 30, min: 1, max: 10_000 },
     ),
     tokenTtlSeconds: parseInteger(
@@ -42,7 +42,7 @@ export async function loadTokenServiceConfig(
     ),
   }
 
-  const allowedOrigin = env.NUTA_ALLOWED_ORIGIN?.trim()
+  const allowedOrigin = env.NUTKA_ALLOWED_ORIGIN?.trim()
   if (allowedOrigin) config.allowedOrigin = allowedOrigin
 
   if (mode === "apple") {
@@ -76,7 +76,7 @@ export async function loadTokenServiceConfig(
 function parseMode(value: string | undefined): TokenServiceMode {
   const mode = value?.trim() || "mock"
   if (mode !== "mock" && mode !== "apple") {
-    throw new Error("NUTA_TOKEN_SERVICE_MODE must be mock or apple")
+    throw new Error("NUTKA_TOKEN_SERVICE_MODE must be mock or apple")
   }
   return mode
 }

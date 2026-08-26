@@ -250,7 +250,7 @@ describe("ApplePlaybackController", () => {
   })
 
   test("removes the dedicated playback profile when authorization is cleared", async () => {
-    const profilePath = await mkdtemp(join(tmpdir(), "nuta-profile-test-"))
+    const profilePath = await mkdtemp(join(tmpdir(), "nutka-profile-test-"))
     await writeFile(join(profilePath, "authorization-state"), "private")
     const { controller } = setupController({ profilePath })
 

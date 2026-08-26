@@ -3,7 +3,7 @@ export const PLAYBACK_HTML = `<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Nuta Playback Worker</title>
+  <title>Nutka Playback Worker</title>
   <script src="https://js-cdn.music.apple.com/musickit/v3/musickit.js"></script>
   <script src="/playback.js" defer></script>
 </head>
@@ -46,7 +46,7 @@ export const PLAYBACK_JS = `(() => {
 
   async function initialize(developerToken, musicUserToken) {
     if (music) throw new Error("already_initialized");
-    await MusicKit.configure({ developerToken, app: { name: "Nuta", build: "1" } });
+    await MusicKit.configure({ developerToken, app: { name: "Nutka", build: "1" } });
     music = MusicKit.getInstance();
     music.musicUserToken = musicUserToken;
     music.addEventListener("playbackError", (event) => {
@@ -120,7 +120,7 @@ export const PLAYBACK_JS = `(() => {
     return run(() => music.stop());
   }));
 
-  window.__nutaPlayback = {
+  window.__nutkaPlayback = {
     initialize,
     setQueue,
     snapshot,

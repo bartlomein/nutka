@@ -11,7 +11,7 @@ const config: TokenServiceConfig = {
   port: 8787,
   rateLimitPerMinute: 1,
   tokenTtlSeconds: 900,
-  allowedOrigin: "https://nuta.example",
+  allowedOrigin: "https://nutka.example",
 }
 
 const issuer = {
@@ -151,7 +151,7 @@ describe("token service HTTP handler", () => {
       new Request("http://127.0.0.1:8787/playback.js"),
     )
     const script = await scriptResponse.text()
-    expect(script).toContain("window.__nutaPlayback")
+    expect(script).toContain("window.__nutkaPlayback")
     expect(script).toContain("music.setQueue(songResourceIds.length === 1")
     expect(script).toContain("music.musicUserToken = musicUserToken")
     expect(script).toContain("completedCommandSequence")

@@ -13,10 +13,10 @@ import type {
   SearchPage,
   Track,
 } from "../core/types"
-import { createNutaApp, type NutaApp } from "./app"
+import { createNutkaApp, type NutkaApp } from "./app"
 
 let setup: TestRendererSetup | undefined
-let app: NutaApp | undefined
+let app: NutkaApp | undefined
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -266,7 +266,7 @@ async function createApp(
     height: options.height ?? 32,
     kittyKeyboard: options.kittyKeyboard,
   })
-  app = createNutaApp(setup.renderer, {
+  app = createNutkaApp(setup.renderer, {
     tracks: options.tracks ?? testTracks,
     onSearchSongs: options.searchSongs,
     onGetAlbumForSong: options.getAlbumForSong,
@@ -282,7 +282,7 @@ async function createApp(
   })
 }
 
-describe("Nuta TUI", () => {
+describe("Nutka TUI", () => {
   test("starts with an honest empty Apple Music workspace", async () => {
     await createApp({ tracks: [] })
     await setup!.renderOnce()
@@ -302,7 +302,7 @@ describe("Nuta TUI", () => {
     await setup!.renderOnce()
     const frame = setup!.captureCharFrame()
 
-    expect(frame).toContain("nuta  /  library")
+    expect(frame).toContain("nutka  /  library")
     expect(frame).toContain("Library")
     expect(frame).toContain("First Track")
     expect(frame).toContain("nothing playing")
@@ -426,7 +426,7 @@ describe("Nuta TUI", () => {
     await setup!.renderOnce()
     const landing = setup!.captureCharFrame()
 
-    expect(landing).toContain("nuta  /  playlists")
+    expect(landing).toContain("nutka  /  playlists")
     expect(landing).toContain("FOR YOU")
     expect(landing).toContain("YOUR LIBRARY")
     expect(landing).toContain("Chill Mix")
@@ -441,7 +441,7 @@ describe("Nuta TUI", () => {
     await setup!.renderOnce()
 
     expect(opened).toEqual([savedPlaylists[1]!])
-    expect(setup!.captureCharFrame()).toContain("nuta  /  playlists  /  playlist")
+    expect(setup!.captureCharFrame()).toContain("nutka  /  playlists  /  playlist")
     expect(setup!.captureCharFrame()).toContain("First Track")
     setup!.mockInput.pressEnter()
     expect(playback.plays[0]?.track.id).toBe("apple:song:1")
@@ -872,7 +872,7 @@ describe("Nuta TUI", () => {
     await Bun.sleep(0)
     await setup!.renderOnce()
     const albumFrame = setup!.captureCharFrame()
-    expect(albumFrame).toContain("nuta  /  search  /  album")
+    expect(albumFrame).toContain("nutka  /  search  /  album")
     expect(albumFrame).toContain("The Album")
     expect(albumFrame).toContain("The Artist")
     expect(albumFrame).toContain("First Track")
@@ -1056,7 +1056,7 @@ describe("Nuta TUI", () => {
     await setup!.renderOnce()
     const frame = setup!.captureCharFrame()
 
-    expect(frame).toContain("Quit Nuta")
+    expect(frame).toContain("Quit Nutka")
     expect(frame).not.toContain("Go to Library")
     setup!.mockInput.pressEnter()
     expect(quitCount).toBe(1)

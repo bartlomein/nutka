@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 
-export interface NutaTheme {
+export interface NutkaTheme {
   background: string
   surface: string
   surfaceRaised: string
@@ -15,7 +15,7 @@ export interface NutaTheme {
   amber: string
 }
 
-const fallbackTheme: NutaTheme = {
+const fallbackTheme: NutkaTheme = {
   background: "#0B0C0C",
   surface: "#121414",
   surfaceRaised: "#181B1A",
@@ -28,7 +28,7 @@ const fallbackTheme: NutaTheme = {
   amber: "#D09A5B",
 }
 
-export function parseOmarchyTheme(source: string): NutaTheme | null {
+export function parseOmarchyTheme(source: string): NutkaTheme | null {
   const color = (name: string): string | undefined =>
     new RegExp(
       `^\\s*${name}\\s*=\\s*["'](#[0-9a-fA-F]{6})["']\\s*$`,
@@ -58,7 +58,7 @@ export function parseOmarchyTheme(source: string): NutaTheme | null {
   }
 }
 
-function loadTheme(): NutaTheme {
+function loadTheme(): NutkaTheme {
   const stateHome =
     process.env.XDG_STATE_HOME ?? join(homedir(), ".local", "state")
   const themePath = join(

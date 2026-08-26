@@ -10,7 +10,7 @@ import type { DeveloperTokenIssuer } from "./token"
 import type { AuthLogger } from "../../../src/services/auth-log"
 
 const MAX_JSON_BODY_BYTES = 8 * 1024
-const BROWSER_COOKIE = "nuta_apple_auth"
+const BROWSER_COOKIE = "nutka_apple_auth"
 const AUTH_PATH_PREFIX = "/v1/apple/auth/"
 
 export function createRequestHandler(

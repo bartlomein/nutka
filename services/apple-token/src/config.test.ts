@@ -16,7 +16,7 @@ describe("token service config", () => {
   test("loads Apple credentials from a file path", async () => {
     const config = await loadTokenServiceConfig(
       {
-        NUTA_TOKEN_SERVICE_MODE: "apple",
+        NUTKA_TOKEN_SERVICE_MODE: "apple",
         APPLE_TEAM_ID: "team",
         APPLE_KEY_ID: "key",
         APPLE_PRIVATE_KEY_PATH: "/private/AuthKey.p8",
@@ -33,7 +33,7 @@ describe("token service config", () => {
 
   test("refuses Apple mode without credentials", async () => {
     expect(
-      loadTokenServiceConfig({ NUTA_TOKEN_SERVICE_MODE: "apple" }),
+      loadTokenServiceConfig({ NUTKA_TOKEN_SERVICE_MODE: "apple" }),
     ).rejects.toThrow("APPLE_TEAM_ID")
   })
 })

@@ -46,7 +46,7 @@ describe("Linux credential store", () => {
         args: [
           "lookup",
           "application",
-          "nuta",
+          "nutka",
           "credential",
           "apple-music-user-token",
           "version",
@@ -60,6 +60,60 @@ describe("Linux credential store", () => {
     ])
   })
 
+  test("migrates a legacy Nuta token without putting it in argv", async () => {
+    const runner = new FakeRunner((request) => {
+      if (request.args[0] === "lookup" && request.args.includes("nutka")) {
+        return result(1)
+      }
+      if (request.args[0] === "lookup") return result(0, "legacy-token\n")
+      return result()
+    })
+    const store = createCredentialStore({ platform: "linux", runner })
+
+    expect(await store.load()).toBe("legacy-token")
+    expect(runner.requests.map(({ args }) => args)).toEqual([
+      [
+        "lookup",
+        "application",
+        "nutka",
+        "credential",
+        "apple-music-user-token",
+        "version",
+        "1",
+      ],
+      [
+        "lookup",
+        "application",
+        "nuta",
+        "credential",
+        "apple-music-user-token",
+        "version",
+        "1",
+      ],
+      [
+        "store",
+        "--label=Nutka Apple Music",
+        "application",
+        "nutka",
+        "credential",
+        "apple-music-user-token",
+        "version",
+        "1",
+      ],
+      [
+        "clear",
+        "application",
+        "nuta",
+        "credential",
+        "apple-music-user-token",
+        "version",
+        "1",
+      ],
+    ])
+    expect(stdin(runner.requests[2]!)).toBe("legacy-token")
+    expect(runner.requests.flatMap(({ args }) => args)).not.toContain("legacy-token")
+  })
+
   test("saves the token only on stdin without a newline", async () => {
     const token = "private.token-value"
     const runner = new FakeRunner(() => result())
@@ -69,9 +123,9 @@ describe("Linux credential store", () => {
 
     expect(runner.requests[0]?.args).toEqual([
       "store",
-      "--label=Nuta Apple Music",
+      "--label=Nutka Apple Music",
       "application",
-      "nuta",
+      "nutka",
       "credential",
       "apple-music-user-token",
       "version",
@@ -94,14 +148,25 @@ describe("Linux credential store", () => {
     const runner = new FakeRunner(() => result(1))
     const store = createCredentialStore({ platform: "linux", runner })
     await expect(store.delete()).resolves.toBeUndefined()
-    expect(runner.requests[0]?.args).toEqual([
-      "clear",
-      "application",
-      "nuta",
-      "credential",
-      "apple-music-user-token",
-      "version",
-      "1",
+    expect(runner.requests.map(({ args }) => args)).toEqual([
+      [
+        "clear",
+        "application",
+        "nutka",
+        "credential",
+        "apple-music-user-token",
+        "version",
+        "1",
+      ],
+      [
+        "clear",
+        "application",
+        "nuta",
+        "credential",
+        "apple-music-user-token",
+        "version",
+        "1",
+      ],
     ])
   })
 })
@@ -115,12 +180,34 @@ describe("macOS credential store", () => {
     expect(runner.requests[0]?.args).toEqual([
       "find-generic-password",
       "-s",
-      "dev.nuta.cli",
+      "dev.nutka.cli",
       "-a",
       "apple-music-user-token.v1",
       "-w",
     ])
     expect(runner.requests[0]?.executable).toBe("/usr/bin/security")
+  })
+
+  test("migrates a legacy Nuta keychain item through encoded stdin", async () => {
+    const runner = new FakeRunner((request) => {
+      if (request.args[0] === "find-generic-password") {
+        return request.args.includes("dev.nutka.cli")
+          ? result(44)
+          : result(0, "bGVnYWN5LXRva2Vu\n")
+      }
+      return result()
+    })
+    const store = createCredentialStore({ platform: "darwin", runner })
+
+    expect(await store.load()).toBe("legacy-token")
+    expect(runner.requests[0]?.args).toContain("dev.nutka.cli")
+    expect(runner.requests[1]?.args).toContain("dev.nuta.cli")
+    expect(runner.requests[2]?.args).toEqual(["-q", "-i"])
+    expect(stdin(runner.requests[2]!)).toContain(
+      "-s dev.nutka.cli -a apple-music-user-token.v1 -w bGVnYWN5LXRva2Vu",
+    )
+    expect(runner.requests[3]?.args).toContain("dev.nuta.cli")
+    expect(runner.requests.flatMap(({ args }) => args)).not.toContain("legacy-token")
   })
 
   test("saves through quiet interactive stdin with no secret in argv", async () => {
@@ -133,7 +220,7 @@ describe("macOS credential store", () => {
     expect(runner.requests[0]?.args).toEqual(["-q", "-i"])
     expect(runner.requests[0]?.args.join(" ")).not.toContain(token)
     expect(stdin(runner.requests[0]!)).toBe(
-      "add-generic-password -U -s dev.nuta.cli -a apple-music-user-token.v1 -w c2Vuc2l0aXZlIHRva2Vu\n",
+      "add-generic-password -U -s dev.nutka.cli -a apple-music-user-token.v1 -w c2Vuc2l0aXZlIHRva2Vu\n",
     )
     expect(stdin(runner.requests[0]!)).not.toContain(token)
   })
@@ -153,7 +240,7 @@ describe("macOS credential store", () => {
     expect(runner.requests[0]?.args).toEqual([
       "delete-generic-password",
       "-s",
-      "dev.nuta.cli",
+      "dev.nutka.cli",
       "-a",
       "apple-music-user-token.v1",
     ])

@@ -23,5 +23,5 @@ const server = Bun.serve({
 })
 
 console.log(
-  `Nuta Apple token service (${config.mode}) listening on ${server.url.origin}`,
+  `Nutka Apple token service (${config.mode}) listening on ${server.url.origin}`,
 )

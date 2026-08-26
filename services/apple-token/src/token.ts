@@ -26,7 +26,7 @@ export function createDeveloperTokenIssuer(
       issue: async () => {
         const expiresAtSeconds = nowSeconds() + config.tokenTtlSeconds
         return {
-          token: "nuta-local-mock-token",
+          token: "nutka-local-mock-token",
           expiresAt: new Date(expiresAtSeconds * 1_000).toISOString(),
           mode: "mock",
         }

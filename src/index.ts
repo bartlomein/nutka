@@ -6,7 +6,7 @@ import { AppleAuthManager } from "./services/apple-auth"
 import { AppleCatalogProvider } from "./services/apple-catalog"
 import { ApplePlaybackController } from "./services/apple-playback"
 import { createCredentialStore } from "./services/credentials"
-import { createNutaApp } from "./ui/app"
+import { createNutkaApp } from "./ui/app"
 import { theme } from "./ui/theme"
 
 const renderer = await createCliRenderer({
@@ -14,7 +14,7 @@ const renderer = await createCliRenderer({
   backgroundColor: theme.background,
 })
 
-const tokenServiceUrl = process.env.NUTA_TOKEN_SERVICE_URL
+const tokenServiceUrl = process.env.NUTKA_TOKEN_SERVICE_URL
 let authManager: AppleAuthManager | undefined
 let setupError: "credential_load_failed" | "service_unavailable" | undefined
 if (tokenServiceUrl) {
@@ -35,13 +35,13 @@ let catalogProvider: AppleCatalogProvider | undefined
 const playbackController = authManager && tokenServiceUrl
   ? new ApplePlaybackController({
       serviceUrl: tokenServiceUrl,
-      executablePath: process.env.NUTA_CHROMIUM_PATH,
+      executablePath: process.env.NUTKA_CHROMIUM_PATH,
       useMusicUserToken: (use) => authManager!.useMusicUserToken(use),
     })
   : undefined
 let shuttingDown = false
 
-const app = createNutaApp(renderer, {
+const app = createNutkaApp(renderer, {
   tracks: [],
   onQuit: () => void shutdown(),
   onSearchSongs: (query, options) => {
