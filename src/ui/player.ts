@@ -5,7 +5,13 @@ import {
   type MouseEvent,
 } from "@opentui/core"
 
-import type { AudioSpectrumFrame, PlaybackStatus, Track } from "../core/types"
+import type {
+  AudioSpectrumFrame,
+  PlaybackRepeatMode,
+  PlaybackShuffleMode,
+  PlaybackStatus,
+  Track,
+} from "../core/types"
 import { createAudioQualityBadge } from "./audio-quality"
 import { theme } from "./theme"
 import { createVisualizer, type VisualizerOptions } from "./visualizer"
@@ -18,7 +24,10 @@ export interface PlayerPanelState {
   durationSeconds: number | null
   errorMessage: string | null
   connected: boolean
-  randomAvailable: boolean
+  shuffleMode: PlaybackShuffleMode
+  repeatMode: PlaybackRepeatMode
+  canSetShuffleMode: boolean
+  canSetRepeatMode: boolean
 }
 
 export interface PlayerPanel {
@@ -44,6 +53,7 @@ export function createPlayerPanel(
   let progressDuration: number | null = null
   let progressWidth = 4
   let progressBarOffset = 6
+  let latestState: PlayerPanelState | undefined
 
   const root = new BoxRenderable(renderer, {
     id: "now-playing",
@@ -62,6 +72,9 @@ export function createPlayerPanel(
   status.width = 3
   primary.add(status)
   primary.add(title)
+  const compactModes = playerText(renderer, "player-compact-modes", "", theme.accent)
+  compactModes.visible = false
+  primary.add(compactModes)
 
   const metadata = playerRow(renderer, "player-metadata", "center")
   const details = playerText(
@@ -93,23 +106,29 @@ export function createPlayerPanel(
   const next = playerText(renderer, "player-next", "", theme.muted)
   const controls = new BoxRenderable(renderer, {
     id: "player-controls",
-    width: 12,
+    width: 33,
     height: 1,
     flexDirection: "row",
     justifyContent: "center",
-    columnGap: 2,
+    columnGap: 1,
   })
   const previousControl = playerText(renderer, "player-previous", "│◀", theme.muted)
-  const randomControl = playerText(renderer, "player-random", "⇄", theme.muted)
+  const shuffleControl = playerText(renderer, "player-shuffle", "", theme.muted)
+  const playPauseControl = playerText(renderer, "player-play-pause", "○", theme.muted)
   const nextControl = playerText(renderer, "player-next-control", "▶│", theme.muted)
+  const repeatControl = playerText(renderer, "player-repeat", "", theme.muted)
   previousControl.width = 2
-  randomControl.width = 1
+  shuffleControl.width = 12
+  playPauseControl.width = 1
   nextControl.width = 2
+  repeatControl.width = 12
   const quality = createAudioQualityBadge(renderer)
   next.flexGrow = 1
+  controls.add(shuffleControl)
   controls.add(previousControl)
-  controls.add(randomControl)
+  controls.add(playPauseControl)
   controls.add(nextControl)
+  controls.add(repeatControl)
   context.add(next)
   context.add(controls)
   context.add(quality.root)
@@ -121,6 +140,7 @@ export function createPlayerPanel(
   root.add(context)
 
   function render(state: PlayerPanelState): void {
+    latestState = state
     const track = state.currentTrack
     const duration = state.durationSeconds ?? track?.durationSeconds ?? null
     progressDuration = track && duration !== null && duration > 0 ? duration : null
@@ -143,8 +163,10 @@ export function createPlayerPanel(
     progress.fg = statusColor
     title.fg = track ? theme.text : state.errorMessage ? theme.amber : theme.muted
     previousControl.fg = track ? theme.accent : theme.muted
-    randomControl.fg = state.randomAvailable ? theme.accent : theme.muted
-    nextControl.fg = state.queue.length > 0 ? theme.accent : theme.muted
+    playPauseControl.fg = track ? theme.accent : theme.muted
+    nextControl.fg = state.queue.length > 0 || state.repeatMode !== "none"
+      ? theme.accent
+      : theme.muted
 
     status.content = state.errorMessage
       ? "×"
@@ -157,7 +179,12 @@ export function createPlayerPanel(
       ? track.title
       : state.errorMessage
         ? "playback unavailable"
-        : "nothing playing"
+          : "nothing playing"
+    playPauseControl.content = state.status === "playing"
+      ? "Ⅱ"
+      : state.status === "paused"
+        ? "▶"
+        : "○"
     details.content = track
       ? `${track.artist}  ·  ${track.album}`
       : state.errorMessage
@@ -173,13 +200,59 @@ export function createPlayerPanel(
     )
 
     const nextTrack = state.queue[0]
-    next.content = nextTrack
-      ? `NEXT  ${nextTrack.title}  ·  ${nextTrack.artist}`
-      : track
-        ? "QUEUE  end of queue"
-        : ""
+    if (track && state.repeatMode === "one") {
+      next.content = "NEXT  repeat current song"
+    } else if (nextTrack) {
+      next.content = `NEXT  ${nextTrack.title}  ·  ${nextTrack.artist}`
+    } else if (track && state.repeatMode === "all") {
+      next.content = "NEXT  queue repeats"
+    } else {
+      next.content = track ? "QUEUE  end of queue" : ""
+    }
     quality.render(track?.audioQuality ?? null)
+    renderModeControls(state)
     visualizer.renderStatus(state.status)
+  }
+
+  function renderModeControls(state: PlayerPanelState): void {
+    const wide = terminalWidth >= 94
+    const shuffleActive = state.shuffleMode === "songs"
+    const repeatActive = state.repeatMode !== "none"
+    const showShuffle = state.canSetShuffleMode || shuffleActive
+    const showRepeat = state.canSetRepeatMode || repeatActive
+    shuffleControl.content = showShuffle
+      ? wide
+        ? ` SHUFFLE ${shuffleActive ? "ON " : "OFF"}`
+        : `S:${shuffleActive ? "ON " : "OFF"}`
+      : ""
+    repeatControl.content = showRepeat
+      ? wide
+        ? ` REPEAT ${repeatModeLabel(state.repeatMode, true)}`
+        : `R:${repeatModeLabel(state.repeatMode, false)}`
+      : ""
+    shuffleControl.fg = shuffleActive ? theme.background : theme.muted
+    shuffleControl.bg = shuffleActive ? theme.accent : theme.background
+    repeatControl.fg = repeatActive ? theme.background : theme.muted
+    repeatControl.bg = repeatActive ? theme.accent : theme.background
+
+    const shuffleWidth = showShuffle ? wide ? 12 : 5 : 0
+    const repeatWidth = showRepeat ? wide ? 12 : 6 : 0
+    shuffleControl.width = shuffleWidth
+    repeatControl.width = repeatWidth
+    controls.width = 9 + shuffleWidth + repeatWidth
+    const compactLabel = [
+      shuffleActive ? "[S:on]" : "",
+      state.repeatMode === "all" ? "[R:all]" : state.repeatMode === "one" ? "[R:1]" : "",
+    ].filter(Boolean).join(" ")
+    compactModes.content = compactLabel
+    compactModes.width = compactLabel.length
+    const showCompactModes = compactHeight && compactLabel.length > 0
+    compactModes.visible = showCompactModes
+    primary.justifyContent = showCompactModes ? "space-between" : "center"
+    title.flexGrow = showCompactModes ? 1 : 0
+    title.width = showCompactModes
+      ? Math.max(1, terminalWidth - compactLabel.length - 5)
+      : "auto"
   }
 
   function renderAudioAnalysis(frame: AudioSpectrumFrame | null): void {
@@ -209,9 +282,13 @@ export function createPlayerPanel(
     compactHeight = isCompactHeight
     root.height = compactHeight ? 3 : visualizerEnabled ? 8 : 5
     root.paddingX = compactHeight ? 1 : 2
+    primary.justifyContent = "center"
+    title.flexGrow = 0
+    title.width = "auto"
     metadata.visible = !compactHeight
     context.visible = !compactHeight
     status.width = 3
+    if (latestState) renderModeControls(latestState)
     quality.applyResponsiveLayout(width, compactHeight)
     visualizer.applyResponsiveLayout(width, compactHeight || !visualizerEnabled)
   }
@@ -224,6 +301,12 @@ export function createPlayerPanel(
     setVisualizerEnabled,
     applyResponsiveLayout,
   }
+}
+
+function repeatModeLabel(mode: PlaybackRepeatMode, wide: boolean): string {
+  if (mode === "all") return wide ? "ALL " : "ALL"
+  if (mode === "one") return wide ? "1   " : "1"
+  return wide ? "OFF " : "OFF"
 }
 
 export function formatProgressLine(

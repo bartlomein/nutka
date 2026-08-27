@@ -90,16 +90,25 @@ Omarchy-compatible TOML theme and optionally define `visualizer_low`,
 - `i`: inspect the selected track, playlist, or its loaded album/playlist context;
   use `j`/`k` or arrows to scroll and `i`/`Escape` to close
 - `Space`: pause or resume confirmed playback
-- `b`, `r`, `n`: play the previous track, a random visible track, or the next track;
-  the now-playing panel shows compact transport icons
+- `b`, `s`, `n`: play the previous track, toggle shuffle, or play the next track;
+  when nothing is playing, `s` shuffle-plays the current source
+- `r`: cycle repeat through all songs, the current song, and off
+- The now-playing panel shows confirmed `SHUFFLE ON/OFF` and
+  `REPEAT OFF/ALL/1` states; compact layouts retain active `S` and `R` badges
 - `v`: toggle the visualizer and suspend or resume PipeWire audio analysis
 - `Ctrl+P`: open commands and navigation
+- `g n`: browse the confirmed now-playing song's album and artists; if a new
+  song starts, the open page remains pinned until you run `g n` again
 - `g h`, `g l`, `g p`, `g s`, `g q`: go to Home, Library, Playlists, Search, or Queue
+- Artist pages: browse top songs, latest release, albums, singles and EPs, and
+  similar artists; press `Enter` to play or open and `m` to load more
+- `Escape` or `Ctrl+O`: return through now-playing artist and album pages
 - Home: browse Apple's titled personalized recommendation sections; press `m`
   to load more sections when available
 - Playlists: browse playlists saved in Your Library
-- Home and Playlists: press `Enter` to open a playlist, press `r` to
-  shuffle-play it without opening it, and press `Escape` to return
+- Home and Playlists: press `Enter` to open a playlist, press `s` to
+  shuffle-play it without opening it, turn shuffle mode on, and press `Escape`
+  to return
 - Playlist tracks: press `Enter` to play the selected song and queue the visible
   songs after it; press `m` to load the next page when available
 - Search: type a query and press `Enter` to search Apple Music songs
@@ -115,11 +124,12 @@ Omarchy-compatible TOML theme and optionally define `visualizer_low`,
 
 Phase 4 Linux playback integration is complete. Nutka has no bundled catalog;
 Home loads titled personalized recommendation sections, Search loads real Apple
-Music songs and selected-song albums, Playlists loads saved library playlists,
+Music songs and selected-song albums, and `g n` opens the confirmed current
+song's album or artist catalog pages. Playlists loads saved library playlists,
 Library remains empty, and Queue shows the worker-confirmed upcoming songs. A
 supervised hidden Chromium worker provides real play, pause, resume, previous,
-next, seek, stop, now-playing updates, and a PipeWire-driven spectrum without
-optimistic UI state.
+next, seek, shuffle, repeat, stop, now-playing updates, and a PipeWire-driven
+spectrum without optimistic UI state.
 The hosted Hono signer supports real ES256 signing without receiving user
 credentials. Nutka owns the loopback-only MusicKit login and playback pages,
 Apple session validation, secure OS-keyring persistence, and secret-safe

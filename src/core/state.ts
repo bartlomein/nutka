@@ -1,4 +1,9 @@
-import type { PlaybackStatus, Track } from "./types"
+import type {
+  PlaybackRepeatMode,
+  PlaybackShuffleMode,
+  PlaybackStatus,
+  Track,
+} from "./types"
 
 export type Destination = "home" | "library" | "playlists" | "search" | "queue"
 
@@ -25,6 +30,10 @@ export interface PlaybackState {
   positionSeconds: number
   durationSeconds: number | null
   errorCode: string | null
+  shuffleMode: PlaybackShuffleMode
+  repeatMode: PlaybackRepeatMode
+  canSetShuffleMode: boolean
+  canSetRepeatMode: boolean
 }
 
 export interface AppState {
@@ -72,6 +81,10 @@ export type AppAction =
       positionSeconds: number
       durationSeconds: number | null
       errorCode: string | null
+      shuffleMode: PlaybackShuffleMode
+      repeatMode: PlaybackRepeatMode
+      canSetShuffleMode: boolean
+      canSetRepeatMode: boolean
     }
 
 export function createInitialState(trackIds: readonly string[]): AppState {
@@ -92,6 +105,10 @@ export function createInitialState(trackIds: readonly string[]): AppState {
       positionSeconds: 0,
       durationSeconds: null,
       errorCode: null,
+      shuffleMode: "off",
+      repeatMode: "none",
+      canSetShuffleMode: false,
+      canSetRepeatMode: false,
     },
   }
 }
@@ -339,6 +356,10 @@ export function reduceAppState(
           positionSeconds: action.positionSeconds,
           durationSeconds: action.durationSeconds,
           errorCode: action.errorCode,
+          shuffleMode: action.shuffleMode,
+          repeatMode: action.repeatMode,
+          canSetShuffleMode: action.canSetShuffleMode,
+          canSetRepeatMode: action.canSetRepeatMode,
         },
       }
     }

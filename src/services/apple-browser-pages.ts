@@ -243,6 +243,25 @@ export const PLAYBACK_JS = `(() => {
     songResourceIds = [...resourceIds];
   }
 
+  function setShuffleMode(mode) {
+    if (!music) throw new Error("not_initialized");
+    lastErrorCode = undefined;
+    if (music.capabilities?.canSetShuffleMode !== true) throw new Error("shuffle_unsupported");
+    if (mode === "off") music.shuffleMode = MusicKit.PlayerShuffleMode.off;
+    else if (mode === "songs") music.shuffleMode = MusicKit.PlayerShuffleMode.songs;
+    else throw new Error("invalid_shuffle_mode");
+  }
+
+  function setRepeatMode(mode) {
+    if (!music) throw new Error("not_initialized");
+    lastErrorCode = undefined;
+    if (music.capabilities?.canSetRepeatMode !== true) throw new Error("repeat_unsupported");
+    if (mode === "none") music.repeatMode = MusicKit.PlayerRepeatMode.none;
+    else if (mode === "all") music.repeatMode = MusicKit.PlayerRepeatMode.all;
+    else if (mode === "one") music.repeatMode = MusicKit.PlayerRepeatMode.one;
+    else throw new Error("invalid_repeat_mode");
+  }
+
   async function play() {
     if (!music || !songResourceIds) throw new Error("not_ready");
     await run(async () => {
@@ -256,6 +275,7 @@ export const PLAYBACK_JS = `(() => {
   function snapshot() {
     if (!music) return { initialized: false };
     const item = music.nowPlayingItem;
+    const queueItems = Array.isArray(music.queue?.items) ? music.queue.items : [];
     return {
       initialized: true,
       authorized: music.isAuthorized === true,
@@ -266,6 +286,17 @@ export const PLAYBACK_JS = `(() => {
       resourceId: typeof item?.id === "string" ? item.id : null,
       title: typeof item?.attributes?.name === "string" ? item.attributes.name : null,
       artist: typeof item?.attributes?.artistName === "string" ? item.attributes.artistName : null,
+      queueResourceIds: queueItems.flatMap((queueItem) =>
+        typeof queueItem?.id === "string" ? [queueItem.id] : []),
+      queuePosition: Number.isInteger(music.queue?.position) ? music.queue.position : -1,
+      shuffleMode: music.shuffleMode === MusicKit.PlayerShuffleMode.songs ? "songs" : "off",
+      repeatMode: music.repeatMode === MusicKit.PlayerRepeatMode.one
+        ? "one"
+        : music.repeatMode === MusicKit.PlayerRepeatMode.all
+          ? "all"
+          : "none",
+      canSetShuffleMode: music.capabilities?.canSetShuffleMode === true,
+      canSetRepeatMode: music.capabilities?.canSetRepeatMode === true,
       lastErrorCode: lastErrorCode ?? null,
       commandSequence,
       completedCommandSequence
@@ -310,6 +341,8 @@ export const PLAYBACK_JS = `(() => {
   window.__nutkaPlayback = {
     initialize,
     setQueue,
+    setShuffleMode,
+    setRepeatMode,
     snapshot,
     seek: (positionSeconds) => {
       if (!music || !Number.isFinite(positionSeconds) || positionSeconds < 0) {

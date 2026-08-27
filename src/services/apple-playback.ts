@@ -6,6 +6,8 @@ import type {
   AudioSpectrumFrame,
   AppleCatalogTrack,
   PlaybackController,
+  PlaybackRepeatMode,
+  PlaybackShuffleMode,
   PlaybackSnapshot,
 } from "../core/types"
 import {
@@ -51,6 +53,8 @@ export interface PlaybackWorkerClient {
   resume(): Promise<void>
   previous(): Promise<void>
   next(): Promise<void>
+  setShuffleMode(mode: PlaybackShuffleMode): Promise<void>
+  setRepeatMode(mode: PlaybackRepeatMode): Promise<void>
   seek(positionSeconds: number): Promise<void>
   stop(): Promise<void>
   dispose(): Promise<void>
@@ -77,6 +81,10 @@ const idleSnapshot: PlaybackSnapshot<AppleCatalogTrack> = {
   positionSeconds: 0,
   durationSeconds: null,
   errorCode: null,
+  shuffleMode: "off",
+  repeatMode: "none",
+  canSetShuffleMode: false,
+  canSetRepeatMode: false,
 }
 
 export class ApplePlaybackController implements PlaybackController<AppleCatalogTrack> {
@@ -96,6 +104,7 @@ export class ApplePlaybackController implements PlaybackController<AppleCatalogT
   private workerGeneration = 0
   private nextLoadId = 1
   private activeLoadId: number | null = null
+  private activeQueuePosition = -1
   private commandRunning = false
   private authorizationEnabled = true
   private analysisEnabled = true
@@ -135,6 +144,7 @@ export class ApplePlaybackController implements PlaybackController<AppleCatalogT
       const tracks = playableQueue(track, upcomingTracks)
       const loadId = this.nextLoadId++
       this.activeLoadId = null
+      this.activeQueuePosition = -1
       this.analysisAcceptingFrames = false
       this.setAnalysis(null)
       this.queues.set(loadId, tracks)
@@ -181,8 +191,28 @@ export class ApplePlaybackController implements PlaybackController<AppleCatalogT
 
   async next(): Promise<void> {
     this.assertUsable()
-    if (this.currentSnapshot.queue.length === 0) return
+    if (
+      this.activeLoadId === null ||
+      (
+        this.currentSnapshot.queue.length === 0 &&
+        this.currentSnapshot.repeatMode === "none"
+      )
+    ) return
     await this.runCommand(() => this.runControl((worker) => worker.next()))
+  }
+
+  async setShuffleMode(mode: PlaybackShuffleMode): Promise<void> {
+    this.assertUsable()
+    if (!this.currentSnapshot.canSetShuffleMode || this.currentSnapshot.shuffleMode === mode) {
+      return
+    }
+    await this.runCommand(() => this.runControl((worker) => worker.setShuffleMode(mode)))
+  }
+
+  async setRepeatMode(mode: PlaybackRepeatMode): Promise<void> {
+    this.assertUsable()
+    if (!this.currentSnapshot.canSetRepeatMode || this.currentSnapshot.repeatMode === mode) return
+    await this.runCommand(() => this.runControl((worker) => worker.setRepeatMode(mode)))
   }
 
   async seek(positionSeconds: number): Promise<void> {
@@ -216,6 +246,7 @@ export class ApplePlaybackController implements PlaybackController<AppleCatalogT
     this.workerPromise = undefined
     this.queues.clear()
     this.activeLoadId = null
+    this.activeQueuePosition = -1
     this.setAnalysis(null)
     this.setSnapshot(idleSnapshot)
     await worker?.dispose().catch(() => {})
@@ -328,33 +359,53 @@ export class ApplePlaybackController implements PlaybackController<AppleCatalogT
     if (this.disposed) return
     if (snapshot.status === "idle" || snapshot.loadId === null) {
       this.activeLoadId = null
+      this.activeQueuePosition = -1
       this.setAnalysis(null)
       this.setSnapshot({
         ...idleSnapshot,
         positionSeconds: snapshot.positionSeconds,
         durationSeconds: snapshot.durationSeconds,
         errorCode: snapshot.errorCode,
+        shuffleMode: snapshot.shuffleMode,
+        repeatMode: snapshot.repeatMode,
+        canSetShuffleMode: snapshot.canSetShuffleMode,
+        canSetRepeatMode: snapshot.canSetRepeatMode,
       })
       return
     }
 
     const tracks = this.queues.get(snapshot.loadId)
-    const currentIndex = tracks?.findIndex(
-      (track) => track.apple.playParams?.id === snapshot.resourceId,
-    ) ?? -1
-    const catalogTrack = tracks?.[currentIndex]
+    const tracksByResourceId = new Map(
+      tracks?.map((track) => [track.apple.playParams!.id, track]) ?? [],
+    )
+    const orderedTracks = snapshot.queueResourceIds.flatMap((resourceId) => {
+      const track = tracksByResourceId.get(resourceId)
+      return track ? [track] : []
+    })
+    const currentIndex = snapshot.queuePosition >= 0 &&
+        orderedTracks[snapshot.queuePosition]?.apple.playParams?.id === snapshot.resourceId
+      ? snapshot.queuePosition
+      : orderedTracks.findIndex(
+          (track) => track.apple.playParams?.id === snapshot.resourceId,
+        )
+    const catalogTrack = orderedTracks[currentIndex]
     if (!catalogTrack) return
     this.activeLoadId = snapshot.loadId
+    this.activeQueuePosition = currentIndex
     const currentTrack = snapshot.audioQuality
       ? { ...catalogTrack, audioQuality: snapshot.audioQuality }
       : catalogTrack
     this.setSnapshot({
       status: snapshot.status,
       currentTrack,
-      queue: tracks!.slice(currentIndex + 1),
+      queue: orderedTracks.slice(currentIndex + 1),
       positionSeconds: snapshot.positionSeconds,
       durationSeconds: snapshot.durationSeconds,
       errorCode: snapshot.errorCode,
+      shuffleMode: snapshot.shuffleMode,
+      repeatMode: snapshot.repeatMode,
+      canSetShuffleMode: snapshot.canSetShuffleMode,
+      canSetRepeatMode: snapshot.canSetRepeatMode,
     })
   }
 
@@ -383,17 +434,15 @@ export class ApplePlaybackController implements PlaybackController<AppleCatalogT
     if (this.disposed) return
     this.queues.clear()
     this.activeLoadId = null
+    this.activeQueuePosition = -1
     this.setAnalysis(null)
     this.setSnapshot({ ...idleSnapshot, errorCode })
   }
 
   private hasPreviousTrack(): boolean {
-    const currentTrackId = this.currentSnapshot.currentTrack?.id
-    if (this.activeLoadId === null || !currentTrackId) return false
-    const tracks = this.queues.get(this.activeLoadId)
-    return (tracks?.findIndex(
-      (track) => track.id === currentTrackId,
-    ) ?? -1) > 0
+    return this.activeLoadId !== null && (
+      this.activeQueuePosition > 0 || this.currentSnapshot.repeatMode !== "none"
+    )
   }
 
   private async runControl(
@@ -539,6 +588,14 @@ class ProcessPlaybackWorkerClient implements PlaybackWorkerClient {
 
   next(): Promise<void> {
     return this.request({ type: "next" }, CONTROL_TIMEOUT_MS)
+  }
+
+  setShuffleMode(mode: PlaybackShuffleMode): Promise<void> {
+    return this.request({ type: "set-shuffle-mode", mode }, CONTROL_TIMEOUT_MS)
+  }
+
+  setRepeatMode(mode: PlaybackRepeatMode): Promise<void> {
+    return this.request({ type: "set-repeat-mode", mode }, CONTROL_TIMEOUT_MS)
   }
 
   seek(positionSeconds: number): Promise<void> {

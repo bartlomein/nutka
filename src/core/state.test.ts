@@ -49,6 +49,10 @@ describe("createInitialState", () => {
         positionSeconds: 0,
         durationSeconds: null,
         errorCode: null,
+        shuffleMode: "off",
+        repeatMode: "none",
+        canSetShuffleMode: false,
+        canSetRepeatMode: false,
       },
     })
   })
@@ -352,6 +356,10 @@ describe("playback", () => {
       positionSeconds: 12,
       durationSeconds: 180,
       errorCode: null,
+      shuffleMode: "songs",
+      repeatMode: "all",
+      canSetShuffleMode: true,
+      canSetRepeatMode: true,
     })
     upcoming.push("later")
 
@@ -362,6 +370,10 @@ describe("playback", () => {
       positionSeconds: 12,
       durationSeconds: 180,
       errorCode: null,
+      shuffleMode: "songs",
+      repeatMode: "all",
+      canSetShuffleMode: true,
+      canSetRepeatMode: true,
     })
     expect(playing.lists.queue.selectedTrackId).toBe("b")
   })
@@ -382,6 +394,10 @@ describe("playback", () => {
       positionSeconds: 0,
       durationSeconds: 180,
       errorCode: null,
+      shuffleMode: "off" as const,
+      repeatMode: "none" as const,
+      canSetShuffleMode: true,
+      canSetRepeatMode: true,
     })
 
     expect(playing.lists.queue).toEqual({
@@ -399,6 +415,10 @@ describe("playback", () => {
       positionSeconds: 5,
       durationSeconds: 180,
       errorCode: null,
+      shuffleMode: "off",
+      repeatMode: "none",
+      canSetShuffleMode: true,
+      canSetRepeatMode: true,
     })
     const paused = reduceAppState(playing, {
       type: "sync-playback",
@@ -408,6 +428,10 @@ describe("playback", () => {
       positionSeconds: 6,
       durationSeconds: 180,
       errorCode: "control_failed",
+      shuffleMode: "songs",
+      repeatMode: "one",
+      canSetShuffleMode: true,
+      canSetRepeatMode: true,
     })
 
     expect(paused.playback).toEqual({
@@ -417,6 +441,10 @@ describe("playback", () => {
       positionSeconds: 6,
       durationSeconds: 180,
       errorCode: "control_failed",
+      shuffleMode: "songs",
+      repeatMode: "one",
+      canSetShuffleMode: true,
+      canSetRepeatMode: true,
     })
   })
 
@@ -429,6 +457,10 @@ describe("playback", () => {
       positionSeconds: 1,
       durationSeconds: 180,
       errorCode: null,
+      shuffleMode: "off" as const,
+      repeatMode: "none" as const,
+      canSetShuffleMode: true,
+      canSetRepeatMode: true,
     }
     const viewingQueue = reduce(
       reduceAppState(createInitialState(trackIds), snapshot),

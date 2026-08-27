@@ -1,4 +1,8 @@
-import type { AudioQuality } from "../core/types"
+import type {
+  AudioQuality,
+  PlaybackRepeatMode,
+  PlaybackShuffleMode,
+} from "../core/types"
 
 export const MAX_PLAYBACK_MESSAGE_BYTES = 64 * 1024
 export const PLAYBACK_SPECTRUM_BAND_COUNT = 64
@@ -25,6 +29,8 @@ export type PlaybackWorkerRequest =
       tracks: readonly PlaybackWorkerTrack[]
     }
   | { type: "set-audio-analysis-enabled"; requestId: number; enabled: boolean }
+  | { type: "set-shuffle-mode"; requestId: number; mode: PlaybackShuffleMode }
+  | { type: "set-repeat-mode"; requestId: number; mode: PlaybackRepeatMode }
   | { type: "pause" | "resume" | "previous" | "next" | "stop"; requestId: number }
   | { type: "seek"; requestId: number; positionSeconds: number }
   | { type: "shutdown"; requestId: number }
@@ -40,11 +46,17 @@ export type PlaybackWorkerResponse =
       type: "snapshot"
       loadId: number | null
       resourceId: string | null
+      queueResourceIds: readonly string[]
+      queuePosition: number
       status: "idle" | "playing" | "paused"
       positionSeconds: number
       durationSeconds: number | null
       errorCode: string | null
       audioQuality: AudioQuality | null
+      shuffleMode: PlaybackShuffleMode
+      repeatMode: PlaybackRepeatMode
+      canSetShuffleMode: boolean
+      canSetRepeatMode: boolean
     }
   | {
       type: "spectrum"
@@ -86,6 +98,14 @@ export function decodePlaybackWorkerRequest(line: string): PlaybackWorkerRequest
     if (typeof value.enabled !== "boolean") return null
     return value as unknown as PlaybackWorkerRequest
   }
+  if (value.type === "set-shuffle-mode") {
+    if (!isShuffleMode(value.mode)) return null
+    return value as unknown as PlaybackWorkerRequest
+  }
+  if (value.type === "set-repeat-mode") {
+    if (!isRepeatMode(value.mode)) return null
+    return value as unknown as PlaybackWorkerRequest
+  }
   if (["pause", "resume", "previous", "next", "stop", "shutdown"].includes(value.type)) {
     return value as unknown as PlaybackWorkerRequest
   }
@@ -104,11 +124,17 @@ export function decodePlaybackWorkerResponse(line: string): PlaybackWorkerRespon
     if (
       !(value.loadId === null || isSafeInteger(value.loadId)) ||
       !(value.resourceId === null || isResourceId(value.resourceId)) ||
+      !isResourceIdArray(value.queueResourceIds) ||
+      !isQueuePosition(value.queuePosition, value.queueResourceIds) ||
       !["idle", "playing", "paused"].includes(String(value.status)) ||
       !isFiniteNonNegative(value.positionSeconds) ||
       !(value.durationSeconds === null || isFiniteNonNegative(value.durationSeconds)) ||
       !(value.errorCode === null || isSafeCode(value.errorCode)) ||
-      !(value.audioQuality === null || isPlaybackAudioQuality(value.audioQuality))
+      !(value.audioQuality === null || isPlaybackAudioQuality(value.audioQuality)) ||
+      !isShuffleMode(value.shuffleMode) ||
+      !isRepeatMode(value.repeatMode) ||
+      typeof value.canSetShuffleMode !== "boolean" ||
+      typeof value.canSetRepeatMode !== "boolean"
     ) return null
     return value as unknown as PlaybackWorkerResponse
   }
@@ -180,6 +206,25 @@ function isWorkerTrack(value: unknown): value is PlaybackWorkerTrack {
 
 function isResourceId(value: unknown): value is string {
   return typeof value === "string" && /^[A-Za-z0-9._-]{1,128}$/.test(value)
+}
+
+function isResourceIdArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.length <= 100 && value.every(isResourceId)
+}
+
+function isQueuePosition(value: unknown, resourceIds: string[]): value is number {
+  return typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= -1 &&
+    value < resourceIds.length
+}
+
+function isShuffleMode(value: unknown): value is PlaybackShuffleMode {
+  return value === "off" || value === "songs"
+}
+
+function isRepeatMode(value: unknown): value is PlaybackRepeatMode {
+  return value === "none" || value === "all" || value === "one"
 }
 
 function isSafeCode(value: unknown): value is string {

@@ -65,6 +65,11 @@ export interface AppleAlbumDetails {
   isSingle?: boolean
 }
 
+export interface AppleArtistDetails {
+  genreNames?: readonly string[]
+  editorialNotes?: string
+}
+
 export interface ApplePlaylistDetails {
   lastModifiedDate?: string
   dateAdded?: string
@@ -86,11 +91,10 @@ export interface AppleCatalogTrack extends Track {
   }
 }
 
-export interface AppleCatalogAlbum {
+export interface AppleCatalogAlbumSummary {
   id: string
   title: string
   artist: string
-  tracks: readonly AppleCatalogTrack[]
   apple: {
     resourceId: string
     resourceType: "albums"
@@ -98,6 +102,60 @@ export interface AppleCatalogAlbum {
     details?: AppleAlbumDetails
   }
 }
+
+export interface AppleCatalogAlbum extends AppleCatalogAlbumSummary {
+  tracks: readonly AppleCatalogTrack[]
+}
+
+export interface AppleCatalogArtist {
+  id: string
+  name: string
+  apple: {
+    resourceId: string
+    resourceType: "artists"
+    artwork?: AppleArtwork
+    details?: AppleArtistDetails
+  }
+}
+
+export interface AppleSongContext {
+  albums: readonly AppleCatalogAlbumSummary[]
+  artists: readonly AppleCatalogArtist[]
+}
+
+export type AppleArtistSectionName =
+  | "top-songs"
+  | "latest-release"
+  | "full-albums"
+  | "singles"
+  | "similar-artists"
+
+export type AppleArtistSectionPage =
+  | {
+      section: "top-songs"
+      items: readonly AppleCatalogTrack[]
+      nextCursor: string | null
+    }
+  | {
+      section: "latest-release"
+      items: readonly AppleCatalogAlbumSummary[]
+      nextCursor: string | null
+    }
+  | {
+      section: "full-albums"
+      items: readonly AppleCatalogAlbumSummary[]
+      nextCursor: string | null
+    }
+  | {
+      section: "singles"
+      items: readonly AppleCatalogAlbumSummary[]
+      nextCursor: string | null
+    }
+  | {
+      section: "similar-artists"
+      items: readonly AppleCatalogArtist[]
+      nextCursor: string | null
+    }
 
 interface ApplePlaylistBase {
   id: string
@@ -150,6 +208,8 @@ export interface MusicProvider<TTrack extends Track = Track> {
 }
 
 export type PlaybackStatus = "idle" | "playing" | "paused"
+export type PlaybackShuffleMode = "off" | "songs"
+export type PlaybackRepeatMode = "none" | "all" | "one"
 
 export interface PlaybackSnapshot<TTrack extends Track = Track> {
   readonly status: PlaybackStatus
@@ -158,6 +218,10 @@ export interface PlaybackSnapshot<TTrack extends Track = Track> {
   readonly positionSeconds: number
   readonly durationSeconds: number | null
   readonly errorCode: string | null
+  readonly shuffleMode: PlaybackShuffleMode
+  readonly repeatMode: PlaybackRepeatMode
+  readonly canSetShuffleMode: boolean
+  readonly canSetRepeatMode: boolean
 }
 
 export interface AudioSpectrumFrame {
@@ -181,6 +245,8 @@ export interface PlaybackController<TTrack extends Track = Track> {
   resume(): Promise<void>
   previous(): Promise<void>
   next(): Promise<void>
+  setShuffleMode(mode: PlaybackShuffleMode): Promise<void>
+  setRepeatMode(mode: PlaybackRepeatMode): Promise<void>
   seek(positionSeconds: number): Promise<void>
   stop(): Promise<void>
   disconnect(): Promise<void>

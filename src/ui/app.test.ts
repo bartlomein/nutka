@@ -3,12 +3,17 @@ import { createTestRenderer, type TestRendererSetup } from "@opentui/core/testin
 
 import type {
   AudioSpectrumFrame,
+  AppleArtistSectionName,
+  AppleArtistSectionPage,
   AppleCatalogAlbum,
+  AppleCatalogAlbumSummary,
+  AppleCatalogArtist,
   AppleCatalogPlaylist,
   AppleCatalogTrack,
   AppleHomeSection,
   AppleLibraryPlaylist,
   ApplePlaylist,
+  AppleSongContext,
   PlaybackController,
   PlaybackSnapshot,
   SearchOptions,
@@ -103,6 +108,56 @@ const testAlbum: AppleCatalogAlbum = {
   },
 }
 
+const browseAlbum: AppleCatalogAlbumSummary = {
+  id: testAlbum.id,
+  title: testAlbum.title,
+  artist: testAlbum.artist,
+  apple: testAlbum.apple,
+}
+
+const testArtists = [
+  {
+    id: "apple:artist:artist-1",
+    name: "The Artist",
+    apple: {
+      resourceId: "artist-1",
+      resourceType: "artists" as const,
+      details: { genreNames: ["Alternative"] },
+    },
+  },
+  {
+    id: "apple:artist:artist-2",
+    name: "Guest Artist",
+    apple: {
+      resourceId: "artist-2",
+      resourceType: "artists" as const,
+      details: { genreNames: ["Electronic"] },
+    },
+  },
+] satisfies readonly AppleCatalogArtist[]
+
+const testSongContext: AppleSongContext = {
+  albums: [browseAlbum],
+  artists: testArtists,
+}
+
+function artistSectionPage(
+  section: AppleArtistSectionName,
+  nextCursor: string | null = null,
+): AppleArtistSectionPage {
+  switch (section) {
+    case "top-songs":
+      return { section, items: catalogTracks, nextCursor }
+    case "latest-release":
+    case "full-albums":
+      return { section, items: [browseAlbum], nextCursor }
+    case "singles":
+      return { section, items: [], nextCursor }
+    case "similar-artists":
+      return { section, items: [testArtists[1]!], nextCursor }
+  }
+}
+
 const recommendedPlaylists = [
   {
     id: "apple:playlist:pl.mix-1",
@@ -176,6 +231,10 @@ class FakePlaybackController implements PlaybackController<AppleCatalogTrack> {
     positionSeconds: 0,
     durationSeconds: null,
     errorCode: null,
+    shuffleMode: "off",
+    repeatMode: "none",
+    canSetShuffleMode: false,
+    canSetRepeatMode: false,
   }
   readonly plays: Array<{
     track: AppleCatalogTrack
@@ -185,6 +244,8 @@ class FakePlaybackController implements PlaybackController<AppleCatalogTrack> {
   resumeCount = 0
   previousCount = 0
   nextCount = 0
+  readonly shuffleModeChanges: Array<"off" | "songs"> = []
+  readonly repeatModeChanges: Array<"none" | "all" | "one"> = []
   readonly analysisEnabledChanges: boolean[] = []
   readonly seekPositions: number[] = []
   disconnectCount = 0
@@ -234,6 +295,14 @@ class FakePlaybackController implements PlaybackController<AppleCatalogTrack> {
     this.nextCount++
   }
 
+  async setShuffleMode(mode: "off" | "songs"): Promise<void> {
+    this.shuffleModeChanges.push(mode)
+  }
+
+  async setRepeatMode(mode: "none" | "all" | "one"): Promise<void> {
+    this.repeatModeChanges.push(mode)
+  }
+
   async seek(positionSeconds: number): Promise<void> {
     this.seekPositions.push(positionSeconds)
   }
@@ -253,9 +322,21 @@ class FakePlaybackController implements PlaybackController<AppleCatalogTrack> {
 
   async dispose(): Promise<void> {}
 
-  confirm(snapshot: PlaybackSnapshot<AppleCatalogTrack>): void {
-    this.snapshot = snapshot
-    for (const listener of this.listeners) listener(snapshot)
+  confirm(snapshot: Omit<
+    PlaybackSnapshot<AppleCatalogTrack>,
+    | "shuffleMode"
+    | "repeatMode"
+    | "canSetShuffleMode"
+    | "canSetRepeatMode"
+  > & Partial<Pick<
+    PlaybackSnapshot<AppleCatalogTrack>,
+    | "shuffleMode"
+    | "repeatMode"
+    | "canSetShuffleMode"
+    | "canSetRepeatMode"
+  >>): void {
+    this.snapshot = { ...this.snapshot, ...snapshot }
+    for (const listener of this.listeners) listener(this.snapshot)
   }
 
   confirmAnalysis(frame: AudioSpectrumFrame | null): void {
@@ -284,6 +365,19 @@ async function createApp(
       songResourceId: string,
       options?: Pick<SearchOptions, "signal">,
     ) => Promise<AppleCatalogAlbum>
+    getSongContext?: (
+      songResourceId: string,
+      options?: Pick<SearchOptions, "signal">,
+    ) => Promise<AppleSongContext>
+    getAlbum?: (
+      albumResourceId: string,
+      options?: Pick<SearchOptions, "signal">,
+    ) => Promise<AppleCatalogAlbum>
+    getArtistSection?: (
+      artistResourceId: string,
+      section: AppleArtistSectionName,
+      options?: SearchOptions,
+    ) => Promise<AppleArtistSectionPage>
     getHomeSections?: (
       options?: SearchOptions,
     ) => Promise<SearchPage<AppleHomeSection>>
@@ -313,6 +407,9 @@ async function createApp(
     tracks: options.tracks ?? testTracks,
     onSearchSongs: options.searchSongs,
     onGetAlbumForSong: options.getAlbumForSong,
+    onGetSongContext: options.getSongContext,
+    onGetAlbum: options.getAlbum,
+    onGetArtistSection: options.getArtistSection,
     onGetHomeSections: options.getHomeSections,
     onGetLibraryPlaylists: options.getLibraryPlaylists,
     onGetPlaylistTracks: options.getPlaylistTracks,
@@ -517,7 +614,7 @@ describe("Nutka TUI", () => {
     expect(setup!.captureCharFrame()).not.toContain("First Track")
   })
 
-  test("plays a selected playlist randomly without opening it", async () => {
+  test("shuffle-plays a selected playlist without opening it", async () => {
     const playback = new FakePlaybackController()
     const cursors: Array<string | undefined> = []
     await createApp({
@@ -536,7 +633,7 @@ describe("Nutka TUI", () => {
 
     app!.setAppleAuthStatus({ state: "signedIn", storefront: "us" })
     await Bun.sleep(0)
-    setup!.mockInput.pressKey("r")
+    setup!.mockInput.pressKey("s")
     await Bun.sleep(0)
     await Bun.sleep(0)
     await setup!.renderOnce()
@@ -547,6 +644,7 @@ describe("Nutka TUI", () => {
       playback.plays[0]!.track.id,
       ...playback.plays[0]!.upcomingTracks.map((track) => track.id),
     ].sort()).toEqual(["apple:song:1", "apple:song:2"])
+    expect(playback.shuffleModeChanges).toEqual(["songs"])
     expect(app!.getState().destination).toBe("home")
     expect(app!.getState().lists.home.selectedTrackId).toBe(
       recommendedPlaylists[1]!.id,
@@ -687,6 +785,311 @@ describe("Nutka TUI", () => {
     expect(setup!.captureCharFrame()).not.toContain("First Track")
   })
 
+  test("browses the pinned confirmed song while playback advances", async () => {
+    const playback = new FakePlaybackController()
+    const context = deferred<AppleSongContext>()
+    const contextSongIds: string[] = []
+    const albumIds: string[] = []
+    const pinnedAlbum: AppleCatalogAlbum = {
+      ...testAlbum,
+      tracks: [catalogTracks[1]!, catalogTracks[0]!],
+    }
+    await createApp({
+      kittyKeyboard: true,
+      playback,
+      getSongContext: (songResourceId) => {
+        contextSongIds.push(songResourceId)
+        return context.promise
+      },
+      getAlbum: async (albumResourceId) => {
+        albumIds.push(albumResourceId)
+        return pinnedAlbum
+      },
+      getArtistSection: async (_artistResourceId, section) => artistSectionPage(section),
+    })
+    playback.confirm({
+      status: "playing",
+      currentTrack: catalogTracks[0]!,
+      queue: [catalogTracks[1]!],
+      positionSeconds: 5,
+      durationSeconds: 180,
+      errorCode: null,
+      canSetShuffleMode: true,
+      canSetRepeatMode: true,
+    })
+
+    setup!.mockInput.pressKey("g")
+    setup!.mockInput.pressKey("n")
+    await Bun.sleep(0)
+    expect(contextSongIds).toEqual(["1"])
+
+    playback.confirm({
+      status: "playing",
+      currentTrack: catalogTracks[1]!,
+      queue: [],
+      positionSeconds: 2,
+      durationSeconds: 240,
+      errorCode: null,
+    })
+    context.resolve(testSongContext)
+    await Bun.sleep(0)
+    await setup!.renderOnce()
+    const picker = setup!.captureCharFrame()
+    expect(picker).toContain("browse now playing")
+    expect(picker).toContain("The Album")
+    expect(picker).toContain("The Artist")
+    expect(picker).toContain("Guest Artist")
+    expect(picker).toContain("Second Track")
+
+    setup!.mockInput.pressEnter()
+    await Bun.sleep(0)
+    await setup!.renderOnce()
+    expect(albumIds).toEqual(["album-1"])
+    expect(setup!.captureCharFrame()).toContain("nutka  /  album")
+
+    setup!.mockInput.pressKey("s")
+    expect(playback.shuffleModeChanges).toEqual(["songs"])
+    expect(playback.plays).toHaveLength(0)
+
+    setup!.mockInput.pressEnter()
+    expect(playback.plays.at(-1)?.track.id).toBe("apple:song:1")
+    setup!.mockInput.pressEscape()
+    await setup!.renderOnce()
+    expect(setup!.captureCharFrame()).toContain("browse now playing")
+    setup!.mockInput.pressEscape()
+    expect(app!.getState().destination).toBe("home")
+  })
+
+  test("opens artist sections, paginates the selected section, and restores history", async () => {
+    const playback = new FakePlaybackController()
+    const sectionRequests: Array<{
+      artistId: string
+      section: AppleArtistSectionName
+      cursor?: string
+    }> = []
+    const secondAlbum: AppleCatalogAlbumSummary = {
+      ...browseAlbum,
+      id: "apple:album:album-2",
+      title: "Second Album",
+      apple: { ...browseAlbum.apple, resourceId: "album-2" },
+    }
+    await createApp({
+      kittyKeyboard: true,
+      playback,
+      getSongContext: async () => testSongContext,
+      getAlbum: async () => testAlbum,
+      getArtistSection: async (artistId, section, options) => {
+        sectionRequests.push({ artistId, section, cursor: options?.cursor })
+        if (section === "full-albums") {
+          return options?.cursor
+            ? { section, items: [secondAlbum], nextCursor: null }
+            : { section, items: [browseAlbum], nextCursor: "/next-full-albums" }
+        }
+        return artistSectionPage(section)
+      },
+    })
+    playback.confirm({
+      status: "playing",
+      currentTrack: catalogTracks[0]!,
+      queue: [catalogTracks[1]!],
+      positionSeconds: 5,
+      durationSeconds: 180,
+      errorCode: null,
+      canSetShuffleMode: true,
+      canSetRepeatMode: true,
+    })
+
+    setup!.mockInput.pressKey("g")
+    setup!.mockInput.pressKey("n")
+    await Bun.sleep(0)
+    setup!.mockInput.pressKey("j")
+    setup!.mockInput.pressEnter()
+    await Bun.sleep(0)
+    await setup!.renderOnce()
+
+    const artistPage = setup!.captureCharFrame()
+    expect(artistPage).toContain("nutka  /  artist")
+    expect(artistPage).toContain("TOP SONGS")
+    expect(artistPage).toContain("LATEST RELEASE")
+    expect(artistPage).toContain("ALBUMS")
+    expect(artistPage).toContain("SINGLES & EPS")
+    expect(artistPage).toContain("SIMILAR ARTISTS")
+    expect(artistPage).toContain("Guest Artist")
+    expect(sectionRequests.map(({ artistId }) => artistId)).toEqual(
+      Array.from({ length: 5 }, () => "artist-1"),
+    )
+
+    setup!.mockInput.pressEnter()
+    expect(playback.plays.at(-1)?.track.id).toBe("apple:song:1")
+    setup!.mockInput.pressKey("j")
+    setup!.mockInput.pressKey("j")
+    setup!.mockInput.pressEnter()
+    await Bun.sleep(0)
+    await setup!.renderOnce()
+    expect(setup!.captureCharFrame()).toContain("nutka  /  album")
+
+    setup!.mockInput.pressEscape()
+    setup!.mockInput.pressKey("j")
+    setup!.mockInput.pressKey("m")
+    await Bun.sleep(0)
+    await setup!.renderOnce()
+    expect(sectionRequests.at(-1)).toEqual({
+      artistId: "artist-1",
+      section: "full-albums",
+      cursor: "/next-full-albums",
+    })
+    expect(setup!.captureCharFrame()).toContain("Second Album")
+
+    setup!.mockInput.pressKey("o", { ctrl: true })
+    await setup!.renderOnce()
+    expect(setup!.captureCharFrame()).toContain("browse now playing")
+    setup!.mockInput.pressEscape()
+    expect(app!.getState().destination).toBe("home")
+  })
+
+  test("prefers top songs when artist sections finish out of order", async () => {
+    const playback = new FakePlaybackController()
+    const topSongs = deferred<AppleArtistSectionPage>()
+    await createApp({
+      playback,
+      getSongContext: async () => testSongContext,
+      getAlbum: async () => testAlbum,
+      getArtistSection: async (_artistResourceId, section) =>
+        section === "top-songs" ? topSongs.promise : artistSectionPage(section),
+    })
+    playback.confirm({
+      status: "playing",
+      currentTrack: catalogTracks[0]!,
+      queue: [],
+      positionSeconds: 1,
+      durationSeconds: 180,
+      errorCode: null,
+    })
+    setup!.mockInput.pressKey("g")
+    setup!.mockInput.pressKey("n")
+    await Bun.sleep(0)
+    setup!.mockInput.pressKey("j")
+    setup!.mockInput.pressEnter()
+    await Bun.sleep(0)
+
+    topSongs.resolve(artistSectionPage("top-songs"))
+    await Bun.sleep(0)
+    setup!.mockInput.pressEnter()
+
+    expect(playback.plays.at(-1)?.track.id).toBe("apple:song:1")
+  })
+
+  test("aborts pending artist requests when navigating back", async () => {
+    const playback = new FakePlaybackController()
+    const sectionSignals: AbortSignal[] = []
+    await createApp({
+      playback,
+      getSongContext: async () => testSongContext,
+      getAlbum: async () => testAlbum,
+      getArtistSection: (_artistResourceId, _section, options) => {
+        if (options?.signal) sectionSignals.push(options.signal)
+        return new Promise<AppleArtistSectionPage>(() => {})
+      },
+    })
+    playback.confirm({
+      status: "playing",
+      currentTrack: catalogTracks[0]!,
+      queue: [],
+      positionSeconds: 1,
+      durationSeconds: 180,
+      errorCode: null,
+    })
+    setup!.mockInput.pressKey("g")
+    setup!.mockInput.pressKey("n")
+    await Bun.sleep(0)
+    setup!.mockInput.pressKey("j")
+    setup!.mockInput.pressEnter()
+    await Bun.sleep(0)
+
+    setup!.mockInput.pressKey("o", { ctrl: true })
+
+    expect(sectionSignals).toHaveLength(5)
+    expect(sectionSignals.every((signal) => signal.aborted)).toBe(true)
+    await setup!.renderOnce()
+    expect(setup!.captureCharFrame()).toContain("browse now playing")
+  })
+
+  test("keeps the now-playing picker usable in a short terminal", async () => {
+    const playback = new FakePlaybackController()
+    const artists = Array.from({ length: 8 }, (_, index): AppleCatalogArtist => ({
+      ...testArtists[0]!,
+      id: `apple:artist:artist-${index + 1}`,
+      name: `Artist ${index + 1}`,
+      apple: {
+        ...testArtists[0]!.apple,
+        resourceId: `artist-${index + 1}`,
+      },
+    }))
+    await createApp({
+      width: 60,
+      height: 10,
+      playback,
+      getSongContext: async () => ({ albums: [browseAlbum], artists }),
+      getAlbum: async () => testAlbum,
+      getArtistSection: async (_artistResourceId, section) => artistSectionPage(section),
+    })
+    playback.confirm({
+      status: "playing",
+      currentTrack: catalogTracks[0]!,
+      queue: [],
+      positionSeconds: 1,
+      durationSeconds: 180,
+      errorCode: null,
+    })
+    setup!.mockInput.pressKey("g")
+    setup!.mockInput.pressKey("n")
+    await Bun.sleep(0)
+    for (let index = 0; index < 8; index++) setup!.mockInput.pressKey("j")
+    await setup!.renderOnce()
+
+    const frame = setup!.captureCharFrame()
+    expect(frame).toContain("browse now playing")
+    expect(frame).toContain("Artist 8")
+    expect(frame).toContain("esc cancel")
+  })
+
+  test("aborts artist browsing when Apple authorization changes", async () => {
+    const playback = new FakePlaybackController()
+    const sectionSignals: AbortSignal[] = []
+    await createApp({
+      getHomeSections: async () => ({ items: [], nextCursor: null }),
+      playback,
+      getSongContext: async () => testSongContext,
+      getAlbum: async () => testAlbum,
+      getArtistSection: (_artistResourceId, _section, options) => {
+        if (options?.signal) sectionSignals.push(options.signal)
+        return new Promise<AppleArtistSectionPage>(() => {})
+      },
+    })
+    app!.setAppleAuthStatus({ state: "signedIn", storefront: "us" })
+    playback.confirm({
+      status: "playing",
+      currentTrack: catalogTracks[0]!,
+      queue: [],
+      positionSeconds: 1,
+      durationSeconds: 180,
+      errorCode: null,
+    })
+    setup!.mockInput.pressKey("g")
+    setup!.mockInput.pressKey("n")
+    await Bun.sleep(0)
+    setup!.mockInput.pressKey("j")
+    setup!.mockInput.pressEnter()
+    await Bun.sleep(0)
+
+    expect(sectionSignals).toHaveLength(5)
+    expect(sectionSignals.every((signal) => !signal.aborted)).toBe(true)
+    app!.setAppleAuthStatus({ state: "signedOut" })
+    expect(sectionSignals.every((signal) => signal.aborted)).toBe(true)
+    await setup!.renderOnce()
+    expect(setup!.captureCharFrame()).not.toContain("TOP SONGS")
+  })
+
   test("moves selection without simulating unavailable playback", async () => {
     await createApp()
 
@@ -734,6 +1137,8 @@ describe("Nutka TUI", () => {
       positionSeconds: 12,
       durationSeconds: 180,
       errorCode: null,
+      canSetShuffleMode: true,
+      canSetRepeatMode: true,
     })
     await setup!.renderOnce()
     expect(app!.getState().playback).toMatchObject({
@@ -776,13 +1181,28 @@ describe("Nutka TUI", () => {
 
     setup!.mockInput.pressKey("n")
     setup!.mockInput.pressKey("b")
+    setup!.mockInput.pressKey("s")
     setup!.mockInput.pressKey("r")
     expect(playback.nextCount).toBe(1)
     expect(playback.previousCount).toBe(1)
-    expect(playback.plays[1]?.track.id).toBe("apple:song:2")
-    expect(playback.plays[1]?.upcomingTracks.map((track) => track.id)).toEqual([
-      "apple:song:1",
-    ])
+    expect(playback.plays).toHaveLength(1)
+    expect(playback.shuffleModeChanges).toEqual(["songs"])
+    expect(playback.repeatModeChanges).toEqual(["all"])
+    expect(app!.getState().playback.shuffleMode).toBe("off")
+
+    playback.confirm({
+      ...playback.snapshot,
+      shuffleMode: "songs",
+      repeatMode: "all",
+    })
+    await setup!.renderOnce()
+    expect(setup!.captureCharFrame()).toContain("SHUFFLE ON")
+    expect(setup!.captureCharFrame()).toContain("REPEAT ALL")
+
+    setup!.mockInput.pressKey("s")
+    setup!.mockInput.pressKey("r")
+    expect(playback.shuffleModeChanges).toEqual(["songs", "off"])
+    expect(playback.repeatModeChanges).toEqual(["all", "one"])
 
     setup!.mockInput.pressKey("g")
     setup!.mockInput.pressKey("q")
@@ -904,6 +1324,40 @@ describe("Nutka TUI", () => {
     expect(setup!.captureCharFrame()).toContain("queue is empty")
   })
 
+  test("exposes Browse Now Playing only for a confirmed catalog song", async () => {
+    const playback = new FakePlaybackController()
+    await createApp({
+      kittyKeyboard: true,
+      playback,
+      getSongContext: async () => testSongContext,
+      getAlbum: async () => testAlbum,
+      getArtistSection: async (_artistResourceId, section) => artistSectionPage(section),
+    })
+
+    setup!.mockInput.pressKey("p", { ctrl: true })
+    await setup!.mockInput.typeText("now playing")
+    await setup!.renderOnce()
+    expect(setup!.captureCharFrame()).toContain("no matching commands")
+    setup!.mockInput.pressEscape()
+
+    playback.confirm({
+      status: "playing",
+      currentTrack: catalogTracks[0]!,
+      queue: [],
+      positionSeconds: 1,
+      durationSeconds: 180,
+      errorCode: null,
+    })
+    setup!.mockInput.pressKey("p", { ctrl: true })
+    await setup!.mockInput.typeText("now playing")
+    await setup!.renderOnce()
+    expect(setup!.captureCharFrame()).toContain("Browse Now Playing")
+    setup!.mockInput.pressEnter()
+    await Bun.sleep(0)
+    await setup!.renderOnce()
+    expect(setup!.captureCharFrame()).toContain("browse now playing")
+  })
+
   test("toggles the visualizer from the command palette", async () => {
     const playback = new FakePlaybackController()
     await createApp({ playback })
@@ -916,6 +1370,35 @@ describe("Nutka TUI", () => {
     setup!.mockInput.pressEnter()
     expect(app!.getState().mode.type).toBe("normal")
     expect(playback.analysisEnabledChanges).toEqual([false])
+  })
+
+  test("exposes confirmed shuffle and repeat controls in the command palette", async () => {
+    const playback = new FakePlaybackController()
+    await createApp({ playback })
+    playback.confirm({
+      status: "playing",
+      currentTrack: catalogTracks[0]!,
+      queue: [catalogTracks[1]!],
+      positionSeconds: 1,
+      durationSeconds: 180,
+      errorCode: null,
+      canSetShuffleMode: true,
+      canSetRepeatMode: true,
+    })
+
+    setup!.mockInput.pressKey("p", { ctrl: true })
+    await setup!.mockInput.typeText("shuffle")
+    await setup!.renderOnce()
+    expect(setup!.captureCharFrame()).toContain("Toggle Shuffle")
+    setup!.mockInput.pressEnter()
+    expect(playback.shuffleModeChanges).toEqual(["songs"])
+
+    setup!.mockInput.pressKey("p", { ctrl: true })
+    await setup!.mockInput.typeText("repeat mode")
+    await setup!.renderOnce()
+    expect(setup!.captureCharFrame()).toContain("Cycle Repeat Mode")
+    setup!.mockInput.pressEnter()
+    expect(playback.repeatModeChanges).toEqual(["all"])
   })
 
   test("submits Apple search and keeps slash as a local result filter", async () => {
@@ -975,6 +1458,7 @@ describe("Nutka TUI", () => {
     await setup!.mockInput.typeText("first")
     setup!.mockInput.pressEnter()
     await Bun.sleep(0)
+    setup!.mockInput.pressKey("g")
     setup!.mockInput.pressKey("s")
     for (let index = 0; index < 5; index++) setup!.mockInput.pressBackspace()
     await setup!.mockInput.typeText("second")
@@ -1004,6 +1488,7 @@ describe("Nutka TUI", () => {
     await setup!.mockInput.typeText("first")
     setup!.mockInput.pressEnter()
     await Bun.sleep(0)
+    setup!.mockInput.pressKey("g")
     setup!.mockInput.pressKey("s")
     for (let index = 0; index < 5; index++) setup!.mockInput.pressBackspace()
     await setup!.mockInput.typeText("second")
@@ -1229,6 +1714,8 @@ describe("Nutka TUI", () => {
     expect(setup!.captureCharFrame()).toContain("keyboard help")
     expect(setup!.captureCharFrame()).toContain("g h home")
     expect(setup!.captureCharFrame()).toContain("g l library")
+    expect(setup!.captureCharFrame()).toContain("b/s/n")
+    expect(setup!.captureCharFrame()).toContain("r repeat")
     expect(setup!.captureCharFrame()).toContain("i           item info")
     expect(setup!.captureCharFrame()).toContain("v    visualizer")
     expect(setup!.captureCharFrame()).toContain("shift+←/→  seek 15s")

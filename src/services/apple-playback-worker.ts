@@ -106,6 +106,7 @@ async function handleRequest(request: PlaybackWorkerRequest): Promise<void> {
 
       case "play": {
         const activeBrowser = requireBrowser()
+        const activeModes = await activeBrowser.snapshot()
         const previousLoadId = activeLoadId
         const previousResourceIds = activeResourceIds
         const previousStatus = confirmedStatus
@@ -113,6 +114,10 @@ async function handleRequest(request: PlaybackWorkerRequest): Promise<void> {
         activeResourceIds = request.tracks.map((track) => track.resourceId)
         confirmedStatus = "idle"
         try {
+          if (activeModes.shuffleMode === "songs") {
+            await activeBrowser.setShuffleMode("off")
+            await waitForSnapshot((snapshot) => snapshot.shuffleMode === "off", CONTROL_TIMEOUT_MS)
+          }
           await activeBrowser.setQueue(request.tracks.map((track) => track.resourceId))
           await clickAndWait("play", START_TIMEOUT_MS)
           await waitForSnapshot(
@@ -121,14 +126,32 @@ async function handleRequest(request: PlaybackWorkerRequest): Promise<void> {
               snapshot.resourceId === request.tracks[0]!.resourceId,
             START_TIMEOUT_MS,
           )
+          if (activeModes.shuffleMode === "songs") {
+            await activeBrowser.setShuffleMode("songs")
+            await waitForSnapshot(
+              (snapshot) => snapshot.shuffleMode === "songs",
+              CONTROL_TIMEOUT_MS,
+            )
+          }
           confirmedStatus = "playing"
           await emitSnapshot()
           await reconcileSpectrumCapture()
           send({ type: "result", requestId: request.requestId, ok: true })
           return
         } catch (error) {
-          const snapshot = await activeBrowser.snapshot().catch(() => undefined)
+          let snapshot = await activeBrowser.snapshot().catch(() => undefined)
           if (!snapshot) return fatalShutdown()
+          if (activeModes.shuffleMode === "songs" && snapshot.shuffleMode !== "songs") {
+            try {
+              await activeBrowser.setShuffleMode("songs")
+              snapshot = await waitForSnapshot(
+                (current) => current.shuffleMode === "songs",
+                CONTROL_TIMEOUT_MS,
+              )
+            } catch {
+              await fatalShutdown()
+            }
+          }
           const snapshotState = snapshot.playbackState ?? -1
           const mediaMayContinue = snapshot.isPlaying === true ||
             ![0, 4, 10].includes(snapshotState)
@@ -188,16 +211,7 @@ async function handleRequest(request: PlaybackWorkerRequest): Promise<void> {
 
       case "previous":
       case "next": {
-        const before = await requireBrowser().snapshot()
-        const currentIndex = activeResourceIds.indexOf(before.resourceId ?? "")
-        const targetIndex = currentIndex + (request.type === "previous" ? -1 : 1)
-        const targetResourceId = activeResourceIds[targetIndex]
-        if (!targetResourceId) throw new Error("queue_boundary")
-        await clickAndWait(request.type, CONTROL_TIMEOUT_MS)
-        const skipped = await waitForSnapshot(
-          (snapshot) => snapshot.resourceId === targetResourceId,
-          CONTROL_TIMEOUT_MS,
-        )
+        const skipped = await clickAndWait(request.type, CONTROL_TIMEOUT_MS)
         confirmedStatus = skipped.isPlaying === true
           ? "playing"
           : skipped.playbackState === 3
@@ -208,6 +222,26 @@ async function handleRequest(request: PlaybackWorkerRequest): Promise<void> {
         send({ type: "result", requestId: request.requestId, ok: true })
         return
       }
+
+      case "set-shuffle-mode":
+        await requireBrowser().setShuffleMode(request.mode)
+        await waitForSnapshot(
+          (snapshot) => snapshot.shuffleMode === request.mode,
+          CONTROL_TIMEOUT_MS,
+        )
+        await emitSnapshot()
+        send({ type: "result", requestId: request.requestId, ok: true })
+        return
+
+      case "set-repeat-mode":
+        await requireBrowser().setRepeatMode(request.mode)
+        await waitForSnapshot(
+          (snapshot) => snapshot.repeatMode === request.mode,
+          CONTROL_TIMEOUT_MS,
+        )
+        await emitSnapshot()
+        send({ type: "result", requestId: request.requestId, ok: true })
+        return
 
       case "seek":
         await requireBrowser().seek(request.positionSeconds)
@@ -278,15 +312,35 @@ async function clickAndWait(
 async function emitSnapshot(): Promise<void> {
   const snapshot = await requireBrowser().snapshot()
   reconcilePlaybackState(snapshot)
+  const rawQueueResourceIds = snapshot.queueResourceIds ?? []
+  const queueResourceIds = rawQueueResourceIds.length <= 100 &&
+      rawQueueResourceIds.every((resourceId) => safeResourceId(resourceId) !== null)
+    ? [...rawQueueResourceIds]
+    : []
+  const queuePosition = Number.isInteger(snapshot.queuePosition) &&
+      snapshot.queuePosition! >= -1 && snapshot.queuePosition! < queueResourceIds.length
+    ? snapshot.queuePosition!
+    : -1
+  if (activeLoadId !== null) activeResourceIds = queueResourceIds
   send({
     type: "snapshot",
     loadId: activeLoadId,
     resourceId: safeResourceId(snapshot.resourceId),
+    queueResourceIds,
+    queuePosition,
     status: confirmedStatus,
     positionSeconds: finiteNonNegative(snapshot.positionSeconds) ?? 0,
     durationSeconds: finiteNonNegative(snapshot.durationSeconds),
     errorCode: safeCode(snapshot.lastErrorCode),
     audioQuality: snapshot.audioQuality ?? null,
+    shuffleMode: snapshot.shuffleMode === "songs" ? "songs" : "off",
+    repeatMode: snapshot.repeatMode === "one"
+      ? "one"
+      : snapshot.repeatMode === "all"
+        ? "all"
+        : "none",
+    canSetShuffleMode: snapshot.canSetShuffleMode === true,
+    canSetRepeatMode: snapshot.canSetRepeatMode === true,
   })
 }
 

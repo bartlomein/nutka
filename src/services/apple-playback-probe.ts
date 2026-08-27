@@ -4,7 +4,12 @@ import { join } from "node:path"
 
 import puppeteer, { type Browser, type Page } from "puppeteer-core"
 
-import type { AppleCatalogTrack, AudioQuality } from "../core/types"
+import type {
+  AppleCatalogTrack,
+  AudioQuality,
+  PlaybackRepeatMode,
+  PlaybackShuffleMode,
+} from "../core/types"
 import {
   isPlaybackDocumentUrl,
   loopbackPlaybackUrl,
@@ -48,6 +53,12 @@ export interface PlaybackProbeSnapshot {
   resourceId?: string | null
   title?: string | null
   artist?: string | null
+  queueResourceIds?: readonly string[]
+  queuePosition?: number
+  shuffleMode?: PlaybackShuffleMode
+  repeatMode?: PlaybackRepeatMode
+  canSetShuffleMode?: boolean
+  canSetRepeatMode?: boolean
   lastErrorCode?: string | null
   commandSequence?: number
   completedCommandSequence?: number
@@ -66,6 +77,8 @@ export interface PlaybackProbeBrowser {
   readonly processId: number | null
   initialize(developerToken: string, musicUserToken: string): Promise<void>
   setQueue(resourceIds: readonly string[]): Promise<void>
+  setShuffleMode(mode: PlaybackShuffleMode): Promise<void>
+  setRepeatMode(mode: PlaybackRepeatMode): Promise<void>
   click(control: PlaybackProbeControl): Promise<void>
   seek(positionSeconds: number): Promise<void>
   snapshot(): Promise<PlaybackProbeSnapshot>
@@ -329,6 +342,8 @@ type PlaybackPageGlobal = typeof globalThis & {
       musicUserToken: string,
     ): Promise<{ authorized: boolean }>
     setQueue(resourceIds: readonly string[]): void
+    setShuffleMode(mode: PlaybackShuffleMode): void
+    setRepeatMode(mode: PlaybackRepeatMode): void
     snapshot(): PlaybackProbeSnapshot
     seek(positionSeconds: number): Promise<void>
   }
@@ -427,6 +442,18 @@ class PuppeteerPlaybackBrowser implements PlaybackProbeBrowser {
     await this.page.evaluate((ids) => {
       ;(globalThis as PlaybackPageGlobal).__nutkaPlayback.setQueue(ids)
     }, [...resourceIds])
+  }
+
+  async setShuffleMode(mode: PlaybackShuffleMode): Promise<void> {
+    await this.page.evaluate((value) => {
+      ;(globalThis as PlaybackPageGlobal).__nutkaPlayback.setShuffleMode(value)
+    }, mode)
+  }
+
+  async setRepeatMode(mode: PlaybackRepeatMode): Promise<void> {
+    await this.page.evaluate((value) => {
+      ;(globalThis as PlaybackPageGlobal).__nutkaPlayback.setRepeatMode(value)
+    }, mode)
   }
 
   async click(control: PlaybackProbeControl): Promise<void> {

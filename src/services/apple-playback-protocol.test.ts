@@ -33,11 +33,19 @@ describe("Apple playback worker protocol", () => {
       requestId: 4,
       enabled: false,
     })
+    expect(decodePlaybackWorkerRequest(
+      '{"type":"set-shuffle-mode","requestId":5,"mode":"songs"}',
+    )).toEqual({ type: "set-shuffle-mode", requestId: 5, mode: "songs" })
+    expect(decodePlaybackWorkerRequest(
+      '{"type":"set-repeat-mode","requestId":6,"mode":"one"}',
+    )).toEqual({ type: "set-repeat-mode", requestId: 6, mode: "one" })
 
     const response = {
       type: "snapshot" as const,
       loadId: 2,
       resourceId: "123",
+      queueResourceIds: ["123", "456"],
+      queuePosition: 0,
       status: "playing" as const,
       positionSeconds: 4,
       durationSeconds: 180,
@@ -47,6 +55,10 @@ describe("Apple playback worker protocol", () => {
         bitrateKbps: 256,
         source: "playback" as const,
       },
+      shuffleMode: "songs" as const,
+      repeatMode: "all" as const,
+      canSetShuffleMode: true,
+      canSetRepeatMode: true,
     }
     expect(decodePlaybackWorkerResponse(encodePlaybackMessage(response).trim())).toEqual(response)
   })
@@ -72,6 +84,28 @@ describe("Apple playback worker protocol", () => {
     expect(decodePlaybackWorkerRequest(
       '{"type":"set-audio-analysis-enabled","requestId":1,"enabled":"false"}',
     )).toBeNull()
+    expect(decodePlaybackWorkerRequest(
+      '{"type":"set-shuffle-mode","requestId":1,"mode":"albums"}',
+    )).toBeNull()
+    expect(decodePlaybackWorkerRequest(
+      '{"type":"set-repeat-mode","requestId":1,"mode":"forever"}',
+    )).toBeNull()
+    expect(decodePlaybackWorkerResponse(JSON.stringify({
+      type: "snapshot",
+      loadId: 1,
+      resourceId: "123",
+      queueResourceIds: ["123"],
+      queuePosition: 1,
+      status: "playing",
+      positionSeconds: 0,
+      durationSeconds: 1,
+      errorCode: null,
+      audioQuality: null,
+      shuffleMode: "off",
+      repeatMode: "none",
+      canSetShuffleMode: true,
+      canSetRepeatMode: true,
+    }))).toBeNull()
   })
 
   test("accepts only fixed-size bounded spectrum frames", () => {

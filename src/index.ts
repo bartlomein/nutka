@@ -87,6 +87,18 @@ const app = createNutkaApp(renderer, {
     if (!catalogProvider) return Promise.reject(new Error("Apple Music sign-in required"))
     return catalogProvider.getAlbumForSong(songResourceId, options)
   },
+  onGetSongContext: (songResourceId, options) => {
+    if (!catalogProvider) return Promise.reject(new Error("Apple Music sign-in required"))
+    return catalogProvider.getSongContext(songResourceId, options)
+  },
+  onGetAlbum: (albumResourceId, options) => {
+    if (!catalogProvider) return Promise.reject(new Error("Apple Music sign-in required"))
+    return catalogProvider.getAlbum(albumResourceId, options)
+  },
+  onGetArtistSection: (artistResourceId, section, options) => {
+    if (!catalogProvider) return Promise.reject(new Error("Apple Music sign-in required"))
+    return catalogProvider.getArtistSection(artistResourceId, section, options)
+  },
   onGetHomeSections: (options) => {
     if (!catalogProvider) return Promise.reject(new Error("Apple Music sign-in required"))
     return catalogProvider.getHomeSections(options)

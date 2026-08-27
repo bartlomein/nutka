@@ -45,6 +45,10 @@ class FakeProbeBrowser implements PlaybackProbeBrowser {
     this.resourceId = resourceIds[0] ?? null
   }
 
+  async setShuffleMode(): Promise<void> {}
+
+  async setRepeatMode(): Promise<void> {}
+
   async click(control: PlaybackProbeControl): Promise<void> {
     this.controls.push(control)
     if (control === "play" || control === "resume") {

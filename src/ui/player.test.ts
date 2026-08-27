@@ -35,7 +35,10 @@ describe("PlayerPanel", () => {
       durationSeconds: 379,
       errorMessage: null,
       connected: true,
-      randomAvailable: true,
+      shuffleMode: "songs",
+      repeatMode: "all",
+      canSetShuffleMode: true,
+      canSetRepeatMode: true,
     })
     player.renderAudioAnalysis({
       sequence: 1,
@@ -56,6 +59,8 @@ describe("PlayerPanel", () => {
     expect(frame).toMatch(/[▁▂▃▄▅▆▇█]{16,}/)
     expect(frame).toContain("NEXT  Teardrop  ·  Massive Attack")
     expect(frame).toContain("AUDIO  LOSSLESS")
+    expect(frame).toContain("SHUFFLE ON")
+    expect(frame).toContain("REPEAT ALL")
     expect(frame).not.toContain("SPACE  PAUSE")
     const lines = frame.split("\n")
     expect(lines.find((line) => line.includes("▶  Angel"))?.indexOf("▶")).toBeGreaterThan(40)
@@ -73,13 +78,16 @@ describe("PlayerPanel", () => {
     player.applyResponsiveLayout(40, true)
     player.render({
       status: "paused",
-      currentTrack,
+      currentTrack: { ...currentTrack, title: "Angel With A Very Long Terminal Title" },
       queue: [nextTrack],
       positionSeconds: 102,
       durationSeconds: 379,
       errorMessage: null,
       connected: true,
-      randomAvailable: true,
+      shuffleMode: "songs",
+      repeatMode: "one",
+      canSetShuffleMode: true,
+      canSetRepeatMode: true,
     })
 
     await setup.renderOnce()
@@ -92,6 +100,7 @@ describe("PlayerPanel", () => {
     expect(frame).not.toContain("NEXT")
     expect(frame).not.toContain("SPACE")
     expect(frame).not.toMatch(/[▁▂▃▄▅▆▇█]{4,}/)
+    expect(frame).toContain("[S:on] [R:1]")
     setup.renderer.destroy()
   })
 
@@ -107,7 +116,10 @@ describe("PlayerPanel", () => {
       durationSeconds: 379,
       errorMessage: null,
       connected: true,
-      randomAvailable: true,
+      shuffleMode: "off",
+      repeatMode: "none",
+      canSetShuffleMode: true,
+      canSetRepeatMode: true,
     })
     player.renderAudioAnalysis({
       sequence: 1,
@@ -157,7 +169,10 @@ describe("PlayerPanel", () => {
       durationSeconds: 379,
       errorMessage: null,
       connected: true,
-      randomAvailable: true,
+      shuffleMode: "off",
+      repeatMode: "none",
+      canSetShuffleMode: true,
+      canSetRepeatMode: true,
     })
 
     await setup.renderOnce()
@@ -190,7 +205,10 @@ describe("PlayerPanel", () => {
       durationSeconds: null,
       errorMessage: "Apple Music playback did not start",
       connected: true,
-      randomAvailable: false,
+      shuffleMode: "off",
+      repeatMode: "none",
+      canSetShuffleMode: false,
+      canSetRepeatMode: false,
     })
 
     await setup.renderOnce()
@@ -204,7 +222,7 @@ describe("PlayerPanel", () => {
     setup.renderer.destroy()
   })
 
-  test("renders compact non-clickable transport icons", async () => {
+  test("renders confirmed playback modes around compact transport icons", async () => {
     const setup = await createTestRenderer({ width: 100, height: 8 })
     const player = createPlayerPanel(setup.renderer)
     setup.renderer.root.add(player.root)
@@ -216,14 +234,51 @@ describe("PlayerPanel", () => {
       durationSeconds: 379,
       errorMessage: null,
       connected: true,
-      randomAvailable: true,
+      shuffleMode: "off",
+      repeatMode: "none",
+      canSetShuffleMode: true,
+      canSetRepeatMode: true,
     })
 
     await setup.renderOnce()
     const frame = setup.captureCharFrame()
-    expect(frame).toContain("│◀  ⇄  ▶│")
+    expect(frame).toContain("SHUFFLE OFF")
+    expect(frame).toContain("REPEAT OFF")
+    expect(frame).toContain("│◀ Ⅱ ▶│")
     expect(frame).not.toContain("PREV b")
     expect(frame).not.toContain("NEXT n")
+    setup.renderer.destroy()
+  })
+
+  test("describes repeat behavior at the end of the queue", async () => {
+    const setup = await createTestRenderer({ width: 80, height: 8 })
+    const player = createPlayerPanel(setup.renderer)
+    setup.renderer.root.add(player.root)
+    const state = {
+      status: "playing" as const,
+      currentTrack,
+      queue: [nextTrack],
+      positionSeconds: 0,
+      durationSeconds: 379,
+      errorMessage: null,
+      connected: true,
+      shuffleMode: "off" as const,
+      repeatMode: "one" as const,
+      canSetShuffleMode: true,
+      canSetRepeatMode: true,
+    }
+
+    player.render(state)
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("NEXT  repeat current song")
+
+    player.render({ ...state, repeatMode: "all" })
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("NEXT  Teardrop")
+
+    player.render({ ...state, queue: [], repeatMode: "all" })
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("NEXT  queue repeats")
     setup.renderer.destroy()
   })
 })

@@ -3,7 +3,11 @@ import { mkdtemp, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
-import type { AppleCatalogTrack } from "../core/types"
+import type {
+  AppleCatalogTrack,
+  PlaybackRepeatMode,
+  PlaybackShuffleMode,
+} from "../core/types"
 import type {
   PlaybackWorkerResponse,
   PlaybackWorkerTrack,
@@ -33,6 +37,8 @@ class FakeWorker implements PlaybackWorkerClient {
   resumeCount = 0
   previousCount = 0
   nextCount = 0
+  shuffleModeChanges: PlaybackShuffleMode[] = []
+  repeatModeChanges: PlaybackRepeatMode[] = []
   analysisEnabledChanges: boolean[] = []
   stopCount = 0
   disposeCount = 0
@@ -79,6 +85,14 @@ class FakeWorker implements PlaybackWorkerClient {
     this.nextCount++
   }
 
+  async setShuffleMode(mode: PlaybackShuffleMode): Promise<void> {
+    this.shuffleModeChanges.push(mode)
+  }
+
+  async setRepeatMode(mode: PlaybackRepeatMode): Promise<void> {
+    this.repeatModeChanges.push(mode)
+  }
+
   async seek(): Promise<void> {}
 
   async stop(): Promise<void> {
@@ -89,8 +103,39 @@ class FakeWorker implements PlaybackWorkerClient {
     this.disposeCount++
   }
 
-  emit(snapshot: Omit<Extract<PlaybackWorkerResponse, { type: "snapshot" }>, "type">): void {
-    this.onSnapshot({ type: "snapshot", ...snapshot })
+  emit(
+    snapshot: Omit<
+      Extract<PlaybackWorkerResponse, { type: "snapshot" }>,
+      | "type"
+      | "queueResourceIds"
+      | "queuePosition"
+      | "shuffleMode"
+      | "repeatMode"
+      | "canSetShuffleMode"
+      | "canSetRepeatMode"
+    > & Partial<Pick<
+      Extract<PlaybackWorkerResponse, { type: "snapshot" }>,
+      | "queueResourceIds"
+      | "queuePosition"
+      | "shuffleMode"
+      | "repeatMode"
+      | "canSetShuffleMode"
+      | "canSetRepeatMode"
+    >>,
+  ): void {
+    const queueResourceIds = snapshot.queueResourceIds ?? this.plays
+      .find((play) => play.loadId === snapshot.loadId)
+      ?.tracks.map((track) => track.resourceId) ?? []
+    this.onSnapshot({
+      type: "snapshot",
+      ...snapshot,
+      queueResourceIds,
+      queuePosition: snapshot.queuePosition ?? queueResourceIds.indexOf(snapshot.resourceId ?? ""),
+      shuffleMode: snapshot.shuffleMode ?? "off",
+      repeatMode: snapshot.repeatMode ?? "none",
+      canSetShuffleMode: snapshot.canSetShuffleMode ?? true,
+      canSetRepeatMode: snapshot.canSetRepeatMode ?? true,
+    })
   }
 
   exit(errorCode = "worker_crashed"): void {
@@ -155,6 +200,114 @@ describe("ApplePlaybackController", () => {
     expect(controller.snapshot.currentTrack).toBe(tracks[1])
     expect(controller.snapshot.queue).toEqual([tracks[2]])
     expect(snapshots).toEqual(["idle", "playing", "playing"])
+    await controller.dispose()
+  })
+
+  test("maps shuffled queue order and confirms playback modes without optimism", async () => {
+    const { controller, workers } = setupController()
+    await controller.play(tracks[0], tracks.slice(1))
+    const worker = workers[0]!
+    worker.emit({
+      loadId: 1,
+      resourceId: "1",
+      queueResourceIds: ["1", "3", "2"],
+      queuePosition: 0,
+      status: "playing",
+      positionSeconds: 2,
+      durationSeconds: 180,
+      errorCode: null,
+      audioQuality: null,
+      shuffleMode: "songs",
+      repeatMode: "none",
+    })
+
+    expect(controller.snapshot.queue).toEqual([tracks[2], tracks[1]])
+    expect(controller.snapshot.shuffleMode).toBe("songs")
+    await controller.setShuffleMode("off")
+    expect(worker.shuffleModeChanges).toEqual(["off"])
+    expect(controller.snapshot.shuffleMode).toBe("songs")
+
+    worker.emit({
+      loadId: 1,
+      resourceId: "1",
+      status: "playing",
+      positionSeconds: 2,
+      durationSeconds: 180,
+      errorCode: null,
+      audioQuality: null,
+      shuffleMode: "off",
+      repeatMode: "none",
+    })
+    await controller.setRepeatMode("all")
+    expect(worker.repeatModeChanges).toEqual(["all"])
+    expect(controller.snapshot.repeatMode).toBe("none")
+    await controller.dispose()
+  })
+
+  test("allows previous to follow repeat behavior at the start of the queue", async () => {
+    const { controller, workers } = setupController()
+    await controller.play(tracks[0], tracks.slice(1))
+    const worker = workers[0]!
+    worker.emit({
+      loadId: 1,
+      resourceId: "1",
+      status: "playing",
+      positionSeconds: 2,
+      durationSeconds: 180,
+      errorCode: null,
+      audioQuality: null,
+    })
+
+    await controller.previous()
+    expect(worker.previousCount).toBe(0)
+
+    worker.emit({
+      loadId: 1,
+      resourceId: "1",
+      status: "playing",
+      positionSeconds: 2,
+      durationSeconds: 180,
+      errorCode: null,
+      audioQuality: null,
+      repeatMode: "one",
+    })
+    await controller.previous()
+    expect(worker.previousCount).toBe(1)
+
+    worker.emit({
+      loadId: 1,
+      resourceId: "1",
+      status: "playing",
+      positionSeconds: 2,
+      durationSeconds: 180,
+      errorCode: null,
+      audioQuality: null,
+      repeatMode: "all",
+    })
+    await controller.previous()
+    expect(worker.previousCount).toBe(2)
+    await controller.dispose()
+  })
+
+  test("does not restart a retained repeat queue after playback becomes idle", async () => {
+    const { controller, workers } = setupController()
+    await controller.play(tracks[0], [])
+    const worker = workers[0]!
+    worker.emit({
+      loadId: null,
+      resourceId: null,
+      queueResourceIds: [],
+      queuePosition: -1,
+      status: "idle",
+      positionSeconds: 0,
+      durationSeconds: null,
+      errorCode: null,
+      audioQuality: null,
+      repeatMode: "one",
+    })
+
+    await controller.next()
+    expect(worker.nextCount).toBe(0)
     await controller.dispose()
   })
 
@@ -422,6 +575,10 @@ describe("ApplePlaybackController", () => {
       positionSeconds: 0,
       durationSeconds: null,
       errorCode: "worker_crashed",
+      shuffleMode: "off",
+      repeatMode: "none",
+      canSetShuffleMode: false,
+      canSetRepeatMode: false,
     })
 
     await controller.play(tracks[1], [])
@@ -450,6 +607,10 @@ describe("ApplePlaybackController", () => {
       positionSeconds: 0,
       durationSeconds: null,
       errorCode: null,
+      shuffleMode: "off",
+      repeatMode: "none",
+      canSetShuffleMode: false,
+      canSetRepeatMode: false,
     })
     await controller.dispose()
   })
@@ -531,6 +692,10 @@ describe("ApplePlaybackController", () => {
       positionSeconds: 0,
       durationSeconds: null,
       errorCode: null,
+      shuffleMode: "off",
+      repeatMode: "none",
+      canSetShuffleMode: false,
+      canSetRepeatMode: false,
     })
     await controller.dispose()
   })
