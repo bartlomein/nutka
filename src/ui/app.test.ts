@@ -915,6 +915,12 @@ describe("Nutka TUI", () => {
     expect(artistPage).toContain("SINGLES & EPS")
     expect(artistPage).toContain("SIMILAR ARTISTS")
     expect(artistPage).toContain("Guest Artist")
+    const songRow = artistPage.split("\n").find((line) => line.includes("First Track"))
+    const albumRow = artistPage.split("\n").find((line) => line.includes("The Album"))
+    expect(songRow).toMatch(/song\s+2026/u)
+    expect(albumRow).toMatch(/album\s+2026/u)
+    expect(songRow).not.toContain("·")
+    expect(albumRow).not.toContain("·")
     expect(sectionRequests.map(({ artistId }) => artistId)).toEqual(
       Array.from({ length: 5 }, () => "artist-1"),
     )

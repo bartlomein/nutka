@@ -256,6 +256,7 @@ interface TrackRow {
   title: TextRenderable
   artist: TextRenderable
   album: TextRenderable
+  year: TextRenderable
   time: TextRenderable
 }
 
@@ -1951,11 +1952,13 @@ export function createNutkaApp(
     setTrackRowContent(
       tableHeader,
       activeBrowsePage?.kind === "artist"
-        ? { title: "item", artist: "artist", album: "type", time: "" }
+        ? { title: "item", artist: "artist", album: "type", year: "year", time: "time" }
         : playlistLanding
           ? { title: "playlist", artist: "curator", album: "description", time: "" }
           : { title: "track", artist: "artist", album: "album", time: "time" },
     )
+    const showYearColumn = activeBrowsePage?.kind === "artist"
+    tableHeader.year.visible = showYearColumn
     tableHeader.box.visible = !(compactHeight && showFilter)
 
     const activeRowCount = Math.max(
@@ -1975,6 +1978,7 @@ export function createNutkaApp(
     )
 
     trackRows.forEach((row, rowIndex) => {
+      row.year.visible = showYearColumn
       if (rowIndex >= activeRowCount) {
         row.box.visible = false
         return
@@ -2990,26 +2994,31 @@ function createTrackRow(
   const title = text(renderer, `${id}-title`, "", theme.text)
   const artist = text(renderer, `${id}-artist`, "", theme.text)
   const album = text(renderer, `${id}-album`, "", theme.text)
+  const year = text(renderer, `${id}-year`, "", theme.text)
   const time = text(renderer, `${id}-time`, "", theme.text)
 
   title.width = "32%"
   artist.width = "24%"
   album.flexGrow = 1
+  year.width = 6
+  year.visible = false
   time.width = 6
   box.add(title)
   box.add(artist)
   box.add(album)
+  box.add(year)
   box.add(time)
-  return { box, title, artist, album, time }
+  return { box, title, artist, album, year, time }
 }
 
 function setTrackRowContent(
   row: TrackRow,
-  content: { title: string; artist: string; album: string; time: string },
+  content: { title: string; artist: string; album: string; year?: string; time: string },
 ): void {
   row.title.content = content.title
   row.artist.content = content.artist
   row.album.content = content.album
+  row.year.content = content.year ?? ""
   row.time.content = content.time
 }
 
@@ -3017,6 +3026,7 @@ function setTrackRowColor(row: TrackRow, color: string): void {
   row.title.fg = color
   row.artist.fg = color
   row.album.fg = color
+  row.year.fg = color
   row.time.fg = color
 }
 
@@ -3088,25 +3098,30 @@ function artistRowContent(
   row: Exclude<ArtistDisplayRow, { kind: "heading" | "message" }>,
   selected: boolean,
   width: number,
-): { title: string; artist: string; album: string; time: string } {
+): { title: string; artist: string; album: string; year: string; time: string } {
   const marker = selected ? "›" : " "
   if (row.kind === "track") {
+    const year = formatReleaseYear(row.track.apple.details?.releaseDate)
     return {
       title: width < 64
         ? `${marker} ${row.track.title} — ${row.track.artist}`
         : `${marker} ${row.track.title}`,
       artist: row.track.artist,
       album: "song",
+      year: year ?? "",
       time: formatDuration(row.track.durationSeconds),
     }
   }
   if (row.kind === "album") {
+    const year = formatReleaseYear(row.album.apple.details?.releaseDate)
+    const type = row.album.apple.details?.isSingle ? "single / EP" : "album"
     return {
       title: width < 64
         ? `${marker} ${row.album.title} — ${row.album.artist}`
         : `${marker} ${row.album.title}`,
       artist: row.album.artist,
-      album: row.album.apple.details?.isSingle ? "single / EP" : "album",
+      album: type,
+      year: year ?? "",
       time: "",
     }
   }
@@ -3115,6 +3130,7 @@ function artistRowContent(
     title: `${marker} ${row.artist.name}`,
     artist: genres,
     album: "artist",
+    year: "",
     time: "",
   }
 }
@@ -3503,6 +3519,10 @@ function formatInfoDate(value: string | undefined): string | undefined {
   if (!value) return undefined
   const date = value.match(/^\d{4}-\d{2}-\d{2}/u)?.[0]
   return date ?? value
+}
+
+function formatReleaseYear(value: string | undefined): string | undefined {
+  return value?.match(/^(\d{4})(?:-\d{2}-\d{2})?$/u)?.[1]
 }
 
 function titleCase(value: string | undefined): string | undefined {
