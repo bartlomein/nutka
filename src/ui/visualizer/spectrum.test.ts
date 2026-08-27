@@ -39,6 +39,18 @@ describe("SpectrumVisualizer", () => {
     expect(lines[2]).toBe(" ██")
   })
 
+  test("renders spaced and wide bar styles in whole terminal cells", () => {
+    const spaced = formatSpectrumFrame([255, 255, 255], 5, 1, palette, false, "spaced")
+    const wide = formatSpectrumFrame([255, 255], 5, 1, palette, false, "wide")
+
+    expect(spaced.chunks.map((chunk) => chunk.text).join("")).toBe("█ █ █")
+    expect(wide.chunks.map((chunk) => chunk.text).join("")).toBe("██ ██")
+    expect(
+      formatSpectrumFrame([255], 1, 1, palette, false, "wide").chunks
+        .map((chunk) => chunk.text).join(""),
+    ).toBe("█")
+  })
+
   test("uses the custom frequency palette and peak color", () => {
     const gradient = formatSpectrumFrame([200, 200, 200], 3, 1, palette)
     expect(gradient.chunks.map((chunk) => chunk.fg?.toInts().slice(0, 3))).toEqual([
@@ -55,9 +67,13 @@ describe("SpectrumVisualizer", () => {
   test("renders real frames, freezes on pause, and hides when compact", async () => {
     const setup = await createTestRenderer({ width: 80, height: 10 })
     const visualizer = createSpectrumVisualizer(setup.renderer, {
-      kind: "spectrum",
+      settings: {
+        kind: "spectrum",
+        style: "dense",
+        palette: "theme",
+        height: 3,
+      },
       palette,
-      height: 3,
     })
     setup.renderer.root.add(visualizer.root)
 
@@ -70,6 +86,18 @@ describe("SpectrumVisualizer", () => {
     visualizer.renderStatus("paused")
     await setup.renderOnce()
     expect(setup.captureCharFrame()).toBe(playing)
+
+    visualizer.applyOptions({
+      settings: {
+        kind: "spectrum",
+        style: "wide",
+        palette: "theme",
+        height: 4,
+      },
+      palette,
+    })
+    await setup.renderOnce()
+    expect(visualizer.root.height).toBe(4)
 
     visualizer.applyResponsiveLayout(40, true)
     await setup.renderOnce()

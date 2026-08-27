@@ -35,12 +35,29 @@ import type { AppleAuthStatus } from "../services/apple-auth"
 import { formatAudioQuality } from "./audio-quality"
 import { createPlayerPanel } from "./player"
 import { theme } from "./theme"
+import {
+  visualizerDefinition,
+  visualizerHeights,
+  visualizerKinds,
+  visualizerPalettes,
+  type VisualizerSettings,
+} from "./visualizer"
+import { resolveVisualizerPalette } from "./visualizer/palettes"
+import { defaultVisualizerSettings } from "./visualizer/preferences"
+import { formatSpectrumFrame } from "./visualizer/spectrum"
 
 const maxTrackRows = 30
 const maxPaletteRows = 7
 const maxPlaybackQueueTracks = 100
 const maxPlaylistShufflePages = 4
 const maxContextRows = 8
+const visualizerSettingCount = 4
+const visualizerPreviewBands = [
+  80, 112, 168, 224, 188, 136, 104, 152,
+  208, 248, 176, 120, 88, 128, 184, 232,
+  196, 144, 96, 116, 164, 212, 180, 132,
+  92, 124, 172, 220, 156, 108, 76, 100,
+] as const
 
 const artistSections = [
   { name: "top-songs", title: "TOP SONGS" },
@@ -70,6 +87,7 @@ type CommandId =
   | "shuffle"
   | "repeat"
   | "visualizer"
+  | "visualizer-settings"
   | "help"
   | "quit"
 
@@ -195,6 +213,13 @@ const commands: readonly Command[] = [
     keywords: "visualizer spectrum audio show hide toggle",
   },
   {
+    id: "visualizer-settings",
+    title: "Visualizer settings",
+    description: "Choose visualization, style, palette, and height",
+    shortcut: "shift+v",
+    keywords: "visualizer settings configure style palette color height",
+  },
+  {
     id: "help",
     title: "Keyboard help",
     description: "Show all shortcuts",
@@ -249,6 +274,8 @@ interface NutkaAppOptions {
   onAppleSignInCancel?: () => void
   onAppleRestore?: () => void
   playback?: PlaybackController<AppleCatalogTrack>
+  visualizerSettings?: VisualizerSettings
+  onSaveVisualizerSettings?: (settings: VisualizerSettings) => void
 }
 
 interface TrackRow {
@@ -273,6 +300,13 @@ interface ContextPickerState {
   pinnedTrack: AppleCatalogTrack
   targets: readonly ContextTarget[]
   selectedIndex: number
+}
+
+interface VisualizerSettingsDialog {
+  original: VisualizerSettings
+  draft: VisualizerSettings
+  selectedIndex: number
+  error?: string
 }
 
 type ArtistBrowseItem =
@@ -400,6 +434,8 @@ export function createNutkaApp(
   let seekRunning = false
   let infoTarget: InfoTarget | undefined
   let visualizerEnabled = true
+  let visualizerSettings = options.visualizerSettings ?? defaultVisualizerSettings
+  let visualizerSettingsDialog: VisualizerSettingsDialog | undefined
   let contextGeneration = 0
   let contextRequest: AbortController | undefined
   let contextPicker: ContextPickerState | undefined
@@ -480,7 +516,10 @@ export function createNutkaApp(
     return row
   })
 
-  const player = createPlayerPanel(renderer, { onSeek: requestSeek })
+  const player = createPlayerPanel(renderer, {
+    onSeek: requestSeek,
+    visualizer: visualizerSettings,
+  })
 
   const footer = new BoxRenderable(renderer, {
     id: "footer",
@@ -624,6 +663,62 @@ export function createNutkaApp(
   contextOverlay.add(contextPopup)
   app.add(contextOverlay)
 
+  const visualizerSettingsOverlay = createOverlay(renderer, "visualizer-settings-overlay", 30)
+  const visualizerSettingsPopup = new BoxRenderable(renderer, {
+    id: "visualizer-settings-popup",
+    width: 64,
+    maxWidth: "94%",
+    height: 12,
+    paddingX: 2,
+    paddingY: 1,
+    flexDirection: "column",
+    border: true,
+    borderColor: theme.border,
+    backgroundColor: theme.surfaceRaised,
+    title: " visualizer settings ",
+    titleColor: theme.accent,
+    bottomTitle: " enter apply  esc cancel ",
+    bottomTitleAlignment: "right",
+  })
+  const visualizerSettingsSummary = text(
+    renderer,
+    "visualizer-settings-summary",
+    "←/→ change · preview updates immediately",
+    theme.muted,
+  )
+  visualizerSettingsPopup.add(visualizerSettingsSummary)
+  const visualizerSettingsRows: PaletteRow[] = Array.from(
+    { length: visualizerSettingCount },
+    (_, index) => {
+      const row = new BoxRenderable(renderer, {
+        id: `visualizer-setting-${index}`,
+        width: "100%",
+        height: 1,
+        flexDirection: "row",
+        justifyContent: "space-between",
+        columnGap: 1,
+      })
+      const title = text(renderer, `visualizer-setting-${index}-title`, "", theme.text)
+      const shortcut = text(renderer, `visualizer-setting-${index}-value`, "", theme.accent)
+      title.flexGrow = 1
+      shortcut.width = 22
+      row.add(title)
+      row.add(shortcut)
+      visualizerSettingsPopup.add(row)
+      return { box: row, title, shortcut }
+    },
+  )
+  const visualizerSettingsPreview = new TextRenderable(renderer, {
+    id: "visualizer-settings-preview",
+    content: "",
+    width: "100%",
+    height: visualizerSettings.height,
+    truncate: true,
+  })
+  visualizerSettingsPopup.add(visualizerSettingsPreview)
+  visualizerSettingsOverlay.add(visualizerSettingsPopup)
+  app.add(visualizerSettingsOverlay)
+
   const helpOverlay = createOverlay(renderer, "help-overlay", 30)
   const helpPopup = new BoxRenderable(renderer, {
     id: "help-popup",
@@ -644,7 +739,7 @@ export function createNutkaApp(
     ["GLOBAL", theme.accent],
     ["g n now playing   g h home   g l library", theme.text],
     ["g p playlists   g s search   g q queue", theme.text],
-    ["ctrl+p  commands      v    visualizer   ? help   q quit", theme.text],
+    ["ctrl+p commands   v visualizer   V settings   ? help   q quit", theme.text],
     ["", theme.text],
     ["LISTS", theme.accent],
     ["j/k or ↑/↓  move      enter  play or open", theme.text],
@@ -1832,7 +1927,10 @@ export function createNutkaApp(
       state.mode.type === "search" ||
       Boolean(activeFilter)
     const compactHeight = renderer.terminalHeight < 21
-    const normalReservedRows = (showFilter ? 21 : 19) - (visualizerEnabled ? 0 : 3)
+    const activeVisualizerSettings = visualizerSettingsDialog?.draft ?? visualizerSettings
+    const normalReservedRows = (showFilter ? 18 : 16) + (
+      visualizerEnabled ? activeVisualizerSettings.height : 0
+    )
     const destinationName = destinationLabel(state.destination)
     const activeAlbumView = !activeBrowsePage && state.destination === "search"
       ? albumView
@@ -2229,6 +2327,48 @@ export function createNutkaApp(
       row.shortcut.fg = selected ? theme.accent : theme.muted
     })
 
+    visualizerSettingsOverlay.visible = visualizerSettingsDialog !== undefined
+    if (visualizerSettingsDialog) {
+      const draft = visualizerSettingsDialog.draft
+      const controls = visualizerSettingRows(draft)
+      visualizerSettingsSummary.content = visualizerSettingsDialog.error ??
+        "←/→ change · preview updates immediately"
+      visualizerSettingsSummary.fg = visualizerSettingsDialog.error
+        ? theme.amber
+        : theme.muted
+      visualizerSettingsRows.forEach((row, index) => {
+        const control = controls[index]!
+        const selected = index === visualizerSettingsDialog!.selectedIndex
+        row.box.backgroundColor = selected ? theme.selection : theme.surfaceRaised
+        row.title.content = `${selected ? "›" : " "} ${control.label}`
+        row.shortcut.content = renderer.terminalWidth < 36
+          ? control.value
+          : `‹ ${control.value} ›`
+        row.title.fg = selected ? theme.text : theme.muted
+        row.shortcut.fg = selected ? theme.accent : theme.muted
+      })
+      const summaryVisible = renderer.terminalHeight >= 9
+      const previewVisible = renderer.terminalHeight >= 15
+      const previewWidth = Math.max(8, Math.min(52, renderer.terminalWidth - 12))
+      visualizerSettingsSummary.visible = summaryVisible
+      visualizerSettingsPreview.visible = previewVisible
+      visualizerSettingsPreview.height = draft.height
+      visualizerSettingsPreview.content = previewVisible
+        ? formatSpectrumFrame(
+            visualizerPreviewBands,
+            previewWidth,
+            draft.height,
+            resolveVisualizerPalette(draft.palette, theme),
+            false,
+            draft.style,
+          )
+        : ""
+      visualizerSettingsPopup.height = Math.min(
+        renderer.terminalHeight - 1,
+        previewVisible ? 9 + draft.height : summaryVisible ? 9 : 6,
+      )
+    }
+
     helpOverlay.visible = state.mode.type === "help"
     const compactHelp = renderer.terminalHeight < 18
     const compactHelpLines = [
@@ -2236,7 +2376,7 @@ export function createNutkaApp(
       "↑/↓ move · i info · / fuzzy filter",
       "b/s/n previous · shuffle · next   r repeat",
       "←/→ seek 5s · shift+←/→ 15s",
-      "g s search · a album · m more · v visualizer · ? help",
+      "g s search · a album · m more · v visualizer · V settings · ? help",
     ]
     helpTexts.forEach((line, index) => {
       line.visible = compactHelp ? index < compactHelpLines.length : true
@@ -2279,7 +2419,9 @@ export function createNutkaApp(
         ? compactAppleAuthStatusLabel(appleAuthStatus)
         : appleAuthStatusLabel(appleAuthStatus)
 
-    mode.content = contextPicker
+    mode.content = visualizerSettingsDialog
+      ? "VISUAL"
+      : contextPicker
       ? "CONTEXT"
       : infoTarget
       ? "INFO"
@@ -2295,6 +2437,10 @@ export function createNutkaApp(
         ? renderer.terminalWidth < 64
           ? "apple login  esc cancel"
           : "Apple Music authorization in progress   esc cancel"
+        : visualizerSettingsDialog
+          ? renderer.terminalWidth < 64
+            ? "j/k select  ←/→ change  enter apply"
+            : "Visualizer settings   j/k select   ←/→ change   enter apply   esc cancel"
         : contextPicker
           ? renderer.terminalWidth < 64
             ? "j/k choose  enter open  esc cancel"
@@ -2373,6 +2519,10 @@ export function createNutkaApp(
       case "visualizer":
         state = reduceAppState(state, { type: "close-mode" })
         toggleVisualizer()
+        return
+      case "visualizer-settings":
+        state = reduceAppState(state, { type: "close-mode" })
+        openVisualizerSettings()
         return
       case "help":
         dispatch({ type: "open-help" })
@@ -2554,6 +2704,37 @@ export function createNutkaApp(
     }
   }
 
+  function handleVisualizerSettingsKey(key: KeyEvent): void {
+    if (!visualizerSettingsDialog) return
+    if (key.name === "escape") {
+      closeVisualizerSettings(false)
+      return
+    }
+    if (key.name === "return" || key.name === "enter") {
+      closeVisualizerSettings(true)
+      return
+    }
+    if (isPlainKey(key, "j") || key.name === "down") {
+      visualizerSettingsDialog.selectedIndex = Math.min(
+        visualizerSettingCount - 1,
+        visualizerSettingsDialog.selectedIndex + 1,
+      )
+      renderState()
+      return
+    }
+    if (isPlainKey(key, "k") || key.name === "up") {
+      visualizerSettingsDialog.selectedIndex = Math.max(
+        0,
+        visualizerSettingsDialog.selectedIndex - 1,
+      )
+      renderState()
+      return
+    }
+    if (key.name === "left" || key.name === "right") {
+      cycleVisualizerSetting(key.name === "left" ? -1 : 1)
+    }
+  }
+
   function handleNormalKey(key: KeyEvent): void {
     if (state.mode.type !== "normal") return
 
@@ -2578,6 +2759,10 @@ export function createNutkaApp(
     }
     if (key.ctrl && (key.name === "o" || key.sequence === "o")) {
       popBrowsePage()
+      return
+    }
+    if (isShiftKey(key, "v")) {
+      openVisualizerSettings()
       return
     }
     const activeBrowsePage = currentBrowsePage()
@@ -2740,6 +2925,7 @@ export function createNutkaApp(
       if (key.name === "escape") options.onAppleSignInCancel?.()
       return
     }
+    if (visualizerSettingsDialog) return handleVisualizerSettingsKey(key)
     if (contextPicker) return handleContextPickerKey(key)
     if (infoTarget) return handleInfoKey(key)
     if (state.mode.type === "palette") return handlePaletteKey(key)
@@ -2777,6 +2963,10 @@ export function createNutkaApp(
     destinationHint.visible = width >= 100
     palettePopup.width = width >= 80 ? 72 : "94%"
     contextPopup.width = width >= 80 ? 72 : "94%"
+    visualizerSettingsPopup.width = width >= 72 ? 64 : "94%"
+    visualizerSettingsPopup.paddingY = renderer.terminalHeight >= 9 ? 1 : 0
+    const visualizerValueWidth = Math.max(4, Math.min(22, Math.floor((width - 8) / 2)))
+    for (const row of visualizerSettingsRows) row.shortcut.width = visualizerValueWidth
     helpPopup.width = width >= 80 ? 72 : "94%"
     infoPopup.width = width >= 90 ? 80 : "94%"
     infoPopup.height = Math.max(7, Math.min(22, renderer.terminalHeight - 1))
@@ -2814,6 +3004,88 @@ export function createNutkaApp(
     visualizerEnabled = !visualizerEnabled
     player.setVisualizerEnabled(visualizerEnabled)
     void options.playback?.audioAnalysis?.setEnabled(visualizerEnabled).catch(() => {})
+    applyResponsiveLayout()
+    renderState()
+  }
+
+  function openVisualizerSettings(): void {
+    state = reduceAppState(state, { type: "close-mode" })
+    visualizerSettingsDialog = {
+      original: { ...visualizerSettings },
+      draft: { ...visualizerSettings },
+      selectedIndex: 0,
+    }
+    renderState()
+  }
+
+  function closeVisualizerSettings(apply: boolean): void {
+    if (!visualizerSettingsDialog) return
+    const dialog = visualizerSettingsDialog
+    if (!apply) {
+      player.setVisualizerSettings(dialog.original)
+      visualizerSettingsDialog = undefined
+      applyResponsiveLayout()
+      renderState()
+      return
+    }
+
+    try {
+      options.onSaveVisualizerSettings?.(dialog.draft)
+      visualizerSettings = { ...dialog.draft }
+      visualizerSettingsDialog = undefined
+      applyResponsiveLayout()
+      renderState()
+    } catch {
+      dialog.error = "Could not save visualizer settings"
+      renderState()
+    }
+  }
+
+  function cycleVisualizerSetting(delta: number): void {
+    if (!visualizerSettingsDialog) return
+    const current = visualizerSettingsDialog.draft
+    let draft: VisualizerSettings
+    switch (visualizerSettingsDialog.selectedIndex) {
+      case 0: {
+        const kind = cycleChoice(visualizerKinds, current.kind, delta)
+        const definition = visualizerDefinition(kind)
+        draft = kind === current.kind
+          ? current
+          : {
+              ...current,
+              kind,
+              style: definition.styles[0]?.value ?? current.style,
+            }
+        break
+      }
+      case 1:
+        draft = {
+          ...current,
+          style: cycleChoice(
+            visualizerDefinition(current.kind).styles,
+            current.style,
+            delta,
+          ),
+        }
+        break
+      case 2:
+        draft = {
+          ...current,
+          palette: cycleChoice(visualizerPalettes, current.palette, delta),
+        }
+        break
+      case 3:
+        draft = {
+          ...current,
+          height: cycleChoice(visualizerHeights, current.height, delta),
+        }
+        break
+      default:
+        return
+    }
+    visualizerSettingsDialog.draft = draft
+    visualizerSettingsDialog.error = undefined
+    player.setVisualizerSettings(draft)
     applyResponsiveLayout()
     renderState()
   }
@@ -3662,6 +3934,54 @@ function isPlainKey(key: KeyEvent, name: string): boolean {
     !key.shift &&
     (key.name === name || key.sequence === name)
   )
+}
+
+function isShiftKey(key: KeyEvent, name: string): boolean {
+  return (
+    !key.ctrl &&
+    !key.meta &&
+    !key.option &&
+    (key.shift || key.sequence === name.toUpperCase()) &&
+    (key.name === name || key.sequence.toLowerCase() === name)
+  )
+}
+
+function visualizerSettingRows(
+  settings: VisualizerSettings,
+): readonly { label: string; value: string }[] {
+  const definition = visualizerDefinition(settings.kind)
+  return [
+    { label: "Visualizer", value: definition.label },
+    {
+      label: "Style",
+      value: choiceLabel(definition.styles, settings.style),
+    },
+    {
+      label: "Palette",
+      value: choiceLabel(visualizerPalettes, settings.palette),
+    },
+    {
+      label: "Height",
+      value: choiceLabel(visualizerHeights, settings.height),
+    },
+  ]
+}
+
+function choiceLabel<T extends string | number>(
+  choices: readonly { value: T; label: string }[],
+  value: T,
+): string {
+  return choices.find((choice) => choice.value === value)?.label ?? String(value)
+}
+
+function cycleChoice<T extends string | number>(
+  choices: readonly { value: T; label: string }[],
+  current: T,
+  delta: number,
+): T {
+  const currentIndex = Math.max(0, choices.findIndex((choice) => choice.value === current))
+  const nextIndex = (currentIndex + delta % choices.length + choices.length) % choices.length
+  return choices[nextIndex]!.value
 }
 
 function destinationLabel(destination: Destination): string {

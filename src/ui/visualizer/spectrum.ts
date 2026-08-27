@@ -10,6 +10,7 @@ import {
 
 import type { AudioSpectrumFrame, PlaybackStatus } from "../../core/types"
 import type {
+  SpectrumVisualizerStyle,
   VisualizerComponent,
   VisualizerOptions,
   VisualizerPalette,
@@ -21,7 +22,7 @@ export function createSpectrumVisualizer(
   renderer: CliRenderer,
   options: VisualizerOptions,
 ): VisualizerComponent {
-  const height = Math.max(1, Math.min(8, Math.floor(options.height ?? 3)))
+  let currentOptions = options
   let terminalWidth = renderer.terminalWidth
   let compactHeight = false
   let status: PlaybackStatus = "idle"
@@ -30,7 +31,7 @@ export function createSpectrumVisualizer(
   const root = new BoxRenderable(renderer, {
     id: "player-visualizer",
     width: "100%",
-    height,
+    height: currentOptions.settings.height,
     flexDirection: "row",
     justifyContent: "center",
   })
@@ -38,16 +39,26 @@ export function createSpectrumVisualizer(
     id: "player-spectrum",
     content: "",
     width: spectrumWidth(terminalWidth),
-    height,
+    height: currentOptions.settings.height,
     truncate: true,
   })
   root.add(spectrum)
 
   function update(): void {
     const width = spectrumWidth(terminalWidth)
+    const height = currentOptions.settings.height
+    root.height = height
     spectrum.width = width
+    spectrum.height = height
     spectrum.content = frame && status !== "idle"
-      ? formatSpectrumFrame(frame.bands, width, height, options.palette, status === "paused")
+      ? formatSpectrumFrame(
+          frame.bands,
+          width,
+          height,
+          currentOptions.palette,
+          status === "paused",
+          currentOptions.settings.style,
+        )
       : ""
   }
 
@@ -62,6 +73,12 @@ export function createSpectrumVisualizer(
     renderer.requestRender()
   }
 
+  function applyOptions(nextOptions: VisualizerOptions): void {
+    currentOptions = nextOptions
+    update()
+    renderer.requestRender()
+  }
+
   function applyResponsiveLayout(width: number, isCompactHeight: boolean): void {
     terminalWidth = width
     compactHeight = isCompactHeight
@@ -70,7 +87,7 @@ export function createSpectrumVisualizer(
   }
 
   applyResponsiveLayout(terminalWidth, compactHeight)
-  return { root, renderStatus, renderFrame, applyResponsiveLayout }
+  return { root, renderStatus, renderFrame, applyOptions, applyResponsiveLayout }
 }
 
 export function formatSpectrumFrame(
@@ -79,13 +96,24 @@ export function formatSpectrumFrame(
   height: number,
   palette: VisualizerPalette,
   dimmed = false,
+  style: SpectrumVisualizerStyle = "dense",
 ): StyledText {
-  const barCount = Math.max(1, Math.floor(width))
+  const layout = spectrumBarLayout(style)
+  const availableWidth = Math.max(1, Math.floor(width))
+  const barWidth = Math.min(layout.barWidth, availableWidth)
+  const gapWidth = layout.gapWidth
+  const barCount = Math.max(1, Math.floor(
+    (availableWidth + gapWidth) / (barWidth + gapWidth),
+  ))
+  const renderedWidth = barCount * barWidth + Math.max(0, barCount - 1) * gapWidth
+  const leftPadding = Math.max(0, Math.floor((availableWidth - renderedWidth) / 2))
+  const rightPadding = Math.max(0, availableWidth - renderedWidth - leftPadding)
   const rowCount = Math.max(1, Math.floor(height))
   const resampled = resampleSpectrum(bands, barCount)
   const chunks: TextChunk[] = []
 
   for (let row = 0; row < rowCount; row++) {
+    if (leftPadding > 0) chunks.push(fg(palette.low)(" ".repeat(leftPadding)))
     for (let index = 0; index < resampled.length; index++) {
       const value = resampled[index]!
       const totalSteps = Math.round(value / 255 * rowCount * 8)
@@ -98,13 +126,26 @@ export function formatSpectrumFrame(
       )
       const tipRow = fill > 0 && totalSteps <= stepsBelow + 8
       const color = tipRow && value >= 224 ? palette.peak : frequencyColor
-      const chunk = fg(color)(glyph)
+      const chunk = fg(color)(glyph.repeat(barWidth))
       chunks.push(dimmed ? dim(chunk) : chunk)
+      if (gapWidth > 0 && index < resampled.length - 1) {
+        chunks.push(fg(color)(" ".repeat(gapWidth)))
+      }
     }
+    if (rightPadding > 0) chunks.push(fg(palette.high)(" ".repeat(rightPadding)))
     if (row < rowCount - 1) chunks.push(fg(palette.low)("\n"))
   }
 
   return new StyledText(chunks)
+}
+
+function spectrumBarLayout(style: SpectrumVisualizerStyle): {
+  barWidth: number
+  gapWidth: number
+} {
+  if (style === "spaced") return { barWidth: 1, gapWidth: 1 }
+  if (style === "wide") return { barWidth: 2, gapWidth: 1 }
+  return { barWidth: 1, gapWidth: 0 }
 }
 
 export function resampleSpectrum(

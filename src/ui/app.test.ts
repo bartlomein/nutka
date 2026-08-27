@@ -21,6 +21,7 @@ import type {
   Track,
 } from "../core/types"
 import { createNutkaApp, type NutkaApp } from "./app"
+import type { VisualizerSettings } from "./visualizer"
 
 let setup: TestRendererSetup | undefined
 let app: NutkaApp | undefined
@@ -389,6 +390,8 @@ async function createApp(
       options?: SearchOptions,
     ) => Promise<SearchPage<AppleCatalogTrack>>
     playback?: PlaybackController<AppleCatalogTrack>
+    visualizerSettings?: VisualizerSettings
+    saveVisualizerSettings?: (settings: VisualizerSettings) => void
   } = {},
   onQuit = () => {},
   apple: {
@@ -419,6 +422,8 @@ async function createApp(
     onAppleSignInCancel: apple.onCancel,
     onAppleRestore: apple.onRestore,
     playback: options.playback,
+    visualizerSettings: options.visualizerSettings,
+    onSaveVisualizerSettings: options.saveVisualizerSettings,
   })
 }
 
@@ -1269,12 +1274,12 @@ describe("Nutka TUI", () => {
       peak: 240,
     })
     await setup!.renderOnce()
-    expect(setup!.captureCharFrame()).toMatch(/[▁▂▃▄▅▆▇█]{8,}/)
+    expect(setup!.captureCharFrame().match(/[▁▂▃▄▅▆▇█]/gu)?.length).toBeGreaterThanOrEqual(8)
 
     setup!.mockInput.pressKey("v")
     await setup!.renderOnce()
     expect(playback.analysisEnabledChanges).toEqual([false])
-    expect(setup!.captureCharFrame()).not.toMatch(/[▁▂▃▄▅▆▇█]{8,}/)
+    expect(setup!.captureCharFrame()).not.toMatch(/[▁▂▃▄▅▆▇█]/)
 
     setup!.mockInput.pressKey("v")
     playback.confirmAnalysis({
@@ -1285,7 +1290,101 @@ describe("Nutka TUI", () => {
     })
     await setup!.renderOnce()
     expect(playback.analysisEnabledChanges).toEqual([false, true])
-    expect(setup!.captureCharFrame()).toMatch(/[▁▂▃▄▅▆▇█]{8,}/)
+    expect(setup!.captureCharFrame().match(/[▁▂▃▄▅▆▇█]/gu)?.length).toBeGreaterThanOrEqual(8)
+  })
+
+  test("previews, applies, and cancels visualizer settings with shift+v", async () => {
+    const saved: VisualizerSettings[] = []
+    await createApp({
+      kittyKeyboard: true,
+      visualizerSettings: {
+        kind: "spectrum",
+        style: "dense",
+        palette: "theme",
+        height: 3,
+      },
+      saveVisualizerSettings: (settings) => saved.push({ ...settings }),
+    })
+
+    setup!.mockInput.pressKey("v", { shift: true })
+    await setup!.renderOnce()
+    expect(setup!.captureCharFrame()).toContain("visualizer settings")
+    expect(setup!.captureCharFrame()).toContain("‹ Dense ›")
+
+    setup!.mockInput.pressArrow("down")
+    setup!.mockInput.pressArrow("right")
+    setup!.mockInput.pressArrow("down")
+    setup!.mockInput.pressArrow("right")
+    setup!.mockInput.pressArrow("down")
+    setup!.mockInput.pressArrow("right")
+    await setup!.renderOnce()
+    expect(setup!.captureCharFrame()).toContain("‹ Spaced ›")
+    expect(setup!.captureCharFrame()).toContain("‹ Monochrome ›")
+    expect(setup!.captureCharFrame()).toContain("‹ 4 rows ›")
+
+    setup!.mockInput.pressEnter()
+    expect(saved).toEqual([{
+      kind: "spectrum",
+      style: "spaced",
+      palette: "monochrome",
+      height: 4,
+    }])
+
+    setup!.mockInput.pressKey("v", { shift: true })
+    setup!.mockInput.pressArrow("down")
+    setup!.mockInput.pressArrow("right")
+    setup!.mockInput.pressEscape()
+    setup!.mockInput.pressKey("v", { shift: true })
+    await setup!.renderOnce()
+    expect(setup!.captureCharFrame()).toContain("‹ Spaced ›")
+    expect(setup!.captureCharFrame()).not.toContain("‹ Wide ›")
+  })
+
+  test("keeps visualizer settings open when persistence fails", async () => {
+    await createApp({
+      kittyKeyboard: true,
+      visualizerSettings: {
+        kind: "spectrum",
+        style: "dense",
+        palette: "theme",
+        height: 3,
+      },
+      saveVisualizerSettings: () => {
+        throw new Error("disk unavailable")
+      },
+    })
+
+    setup!.mockInput.pressKey("v", { shift: true })
+    setup!.mockInput.pressArrow("down")
+    setup!.mockInput.pressArrow("right")
+    setup!.mockInput.pressEnter()
+    await setup!.renderOnce()
+    expect(setup!.captureCharFrame()).toContain("Could not save visualizer settings")
+
+    setup!.mockInput.pressEscape()
+    setup!.mockInput.pressKey("v", { shift: true })
+    await setup!.renderOnce()
+    expect(setup!.captureCharFrame()).toContain("‹ Dense ›")
+  })
+
+  test("keeps visualizer controls usable in a very small terminal", async () => {
+    await createApp({ width: 30, height: 8, kittyKeyboard: true })
+
+    setup!.mockInput.pressKey("v", { shift: true })
+    await setup!.renderOnce()
+    const frame = setup!.captureCharFrame()
+    expect(frame).toContain("Visualizer")
+    expect(frame).toContain("Style")
+    expect(frame).toContain("Palette")
+    expect(frame).toContain("Height")
+  })
+
+  test("opens visualizer settings from an uppercase terminal key", async () => {
+    await createApp()
+
+    setup!.mockInput.pressKey("V")
+    await setup!.renderOnce()
+    expect(setup!.captureCharFrame()).toContain("visualizer settings")
   })
 
   test("disconnects confirmed playback when Apple authorization changes", async () => {
@@ -1376,6 +1475,14 @@ describe("Nutka TUI", () => {
     setup!.mockInput.pressEnter()
     expect(app!.getState().mode.type).toBe("normal")
     expect(playback.analysisEnabledChanges).toEqual([false])
+
+    setup!.mockInput.pressKey("p", { ctrl: true })
+    await setup!.mockInput.typeText("palette color height")
+    await setup!.renderOnce()
+    expect(setup!.captureCharFrame()).toContain("Visualizer settings")
+    setup!.mockInput.pressEnter()
+    await setup!.renderOnce()
+    expect(setup!.captureCharFrame()).toContain("visualizer settings")
   })
 
   test("exposes confirmed shuffle and repeat controls in the command palette", async () => {
@@ -1723,7 +1830,8 @@ describe("Nutka TUI", () => {
     expect(setup!.captureCharFrame()).toContain("b/s/n")
     expect(setup!.captureCharFrame()).toContain("r repeat")
     expect(setup!.captureCharFrame()).toContain("i           item info")
-    expect(setup!.captureCharFrame()).toContain("v    visualizer")
+    expect(setup!.captureCharFrame()).toContain("v visualizer")
+    expect(setup!.captureCharFrame()).toContain("V settings")
     expect(setup!.captureCharFrame()).toContain("shift+←/→  seek 15s")
 
     setup!.mockInput.pressKey("q")
@@ -1785,7 +1893,7 @@ describe("Nutka TUI", () => {
     await createApp({ width: 60, height: 12 }, () => quitCount++)
 
     setup!.mockInput.pressKey("p", { ctrl: true })
-    for (let index = 0; index < 8; index++) setup!.mockInput.pressArrow("down")
+    for (let index = 0; index < 9; index++) setup!.mockInput.pressArrow("down")
     await setup!.renderOnce()
     const frame = setup!.captureCharFrame()
 

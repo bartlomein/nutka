@@ -15,6 +15,10 @@ import { createAuthLogger } from "./services/auth-log"
 import { createCredentialStore } from "./services/credentials"
 import { createNutkaApp } from "./ui/app"
 import { theme } from "./ui/theme"
+import {
+  loadVisualizerSettings,
+  saveVisualizerSettings,
+} from "./ui/visualizer/preferences"
 
 const renderer = await createCliRenderer({
   exitOnCtrlC: false,
@@ -126,6 +130,8 @@ const app = createNutkaApp(renderer, {
     ? () => void authManager.restore().catch(() => {})
     : undefined,
   playback: playbackController,
+  visualizerSettings: loadVisualizerSettings(),
+  onSaveVisualizerSettings: (settings) => saveVisualizerSettings(settings),
 })
 
 if (authManager) {

@@ -85,8 +85,11 @@ On Linux, the three-row spectrum visualizer analyzes Nutka's exact Chromium
 PipeWire stream. It does not capture the microphone, other applications, or the
 whole output device. The visualizer stays blank if PipeWire capture is
 unavailable and never affects playback. Press `v` to hide it and suspend audio
-analysis for the rest of the session; press `v` again to restore it. Set
-`NUTKA_THEME_PATH` to a custom
+analysis for the rest of the session; press `v` again to restore it. Press
+`Shift+V` to choose the visualizer kind, dense/spaced/wide style, palette, and
+height with a live preview. Nutka saves these choices to
+`$XDG_CONFIG_HOME/nutka/config.toml` or `~/.config/nutka/config.toml`. Set
+`NUTKA_CONFIG_PATH` to use another file. Set `NUTKA_THEME_PATH` to a custom
 Omarchy-compatible TOML theme and optionally define `visualizer_low`,
 `visualizer_mid`, `visualizer_high`, and `visualizer_peak` as `#RRGGBB` colors.
 
@@ -103,6 +106,7 @@ Omarchy-compatible TOML theme and optionally define `visualizer_low`,
 - The now-playing panel shows confirmed `SHUFFLE ON/OFF` and
   `REPEAT OFF/ALL/1` states; compact layouts retain active `S` and `R` badges
 - `v`: toggle the visualizer and suspend or resume PipeWire audio analysis
+- `Shift+V`: configure the visualizer with a live preview
 - `Ctrl+P`: open commands and navigation
 - `g n`: browse the confirmed now-playing song's album and artists; if a new
   song starts, the open page remains pinned until you run `g n` again

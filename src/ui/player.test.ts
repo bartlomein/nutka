@@ -56,7 +56,7 @@ describe("PlayerPanel", () => {
     expect(frame).toContain("6:19")
     expect(frame).toContain("━")
     expect(frame).toContain("●")
-    expect(frame).toMatch(/[▁▂▃▄▅▆▇█]{16,}/)
+    expect(frame.match(/[▁▂▃▄▅▆▇█]/gu)?.length).toBeGreaterThanOrEqual(16)
     expect(frame).toContain("NEXT  Teardrop  ·  Massive Attack")
     expect(frame).toContain("AUDIO  LOSSLESS")
     expect(frame).toContain("SHUFFLE ON")
@@ -99,7 +99,7 @@ describe("PlayerPanel", () => {
     expect(frame).not.toContain("Massive Attack")
     expect(frame).not.toContain("NEXT")
     expect(frame).not.toContain("SPACE")
-    expect(frame).not.toMatch(/[▁▂▃▄▅▆▇█]{4,}/)
+    expect(frame).not.toMatch(/[▁▂▃▄▅▆▇█]/)
     expect(frame).toContain("[S:on] [R:1]")
     setup.renderer.destroy()
   })
@@ -129,7 +129,7 @@ describe("PlayerPanel", () => {
     })
     await setup.renderOnce()
     expect(player.root.height).toBe(8)
-    expect(setup.captureCharFrame()).toMatch(/[▁▂▃▄▅▆▇█]{8,}/)
+    expect(setup.captureCharFrame().match(/[▁▂▃▄▅▆▇█]/gu)?.length).toBeGreaterThanOrEqual(8)
 
     player.setVisualizerEnabled(false)
     player.renderAudioAnalysis({
@@ -140,12 +140,12 @@ describe("PlayerPanel", () => {
     })
     await setup.renderOnce()
     expect(player.root.height).toBe(5)
-    expect(setup.captureCharFrame()).not.toMatch(/[▁▂▃▄▅▆▇█]{8,}/)
+    expect(setup.captureCharFrame()).not.toMatch(/[▁▂▃▄▅▆▇█]/)
 
     player.setVisualizerEnabled(true)
     await setup.renderOnce()
     expect(player.root.height).toBe(8)
-    expect(setup.captureCharFrame()).not.toMatch(/[▁▂▃▄▅▆▇█]{8,}/)
+    expect(setup.captureCharFrame()).not.toMatch(/[▁▂▃▄▅▆▇█]/)
 
     player.applyResponsiveLayout(80, true)
     await setup.renderOnce()

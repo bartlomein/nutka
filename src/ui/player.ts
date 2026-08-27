@@ -14,7 +14,12 @@ import type {
 } from "../core/types"
 import { createAudioQualityBadge } from "./audio-quality"
 import { theme } from "./theme"
-import { createVisualizer, type VisualizerOptions } from "./visualizer"
+import {
+  createVisualizer,
+  type VisualizerSettings,
+} from "./visualizer"
+import { resolveVisualizerPalette } from "./visualizer/palettes"
+import { defaultVisualizerSettings } from "./visualizer/preferences"
 
 export interface PlayerPanelState {
   status: PlaybackStatus
@@ -35,12 +40,13 @@ export interface PlayerPanel {
   render(state: PlayerPanelState): void
   renderAudioAnalysis(frame: AudioSpectrumFrame | null): void
   setVisualizerEnabled(enabled: boolean): void
+  setVisualizerSettings(settings: VisualizerSettings): void
   applyResponsiveLayout(width: number, compactHeight: boolean): void
 }
 
 export interface PlayerPanelOptions {
   onSeek?: (positionSeconds: number) => void
-  visualizer?: VisualizerOptions
+  visualizer?: VisualizerSettings
 }
 
 export function createPlayerPanel(
@@ -50,6 +56,7 @@ export function createPlayerPanel(
   let terminalWidth = renderer.terminalWidth
   let compactHeight = false
   let visualizerEnabled = true
+  let visualizerSettings = options.visualizer ?? defaultVisualizerSettings
   let progressDuration: number | null = null
   let progressWidth = 4
   let progressBarOffset = 6
@@ -85,15 +92,9 @@ export function createPlayerPanel(
   )
   metadata.add(details)
 
-  const visualizer = createVisualizer(renderer, options.visualizer ?? {
-    kind: "spectrum",
-    height: 3,
-    palette: {
-      low: theme.visualizerLow,
-      mid: theme.visualizerMid,
-      high: theme.visualizerHigh,
-      peak: theme.visualizerPeak,
-    },
+  const visualizer = createVisualizer(renderer, {
+    settings: visualizerSettings,
+    palette: resolveVisualizerPalette(visualizerSettings.palette, theme),
   })
 
   const progressRow = playerRow(renderer, "player-progress-row", "center")
@@ -268,6 +269,16 @@ export function createPlayerPanel(
     renderer.requestRender()
   }
 
+  function setVisualizerSettings(settings: VisualizerSettings): void {
+    visualizerSettings = settings
+    visualizer.applyOptions({
+      settings,
+      palette: resolveVisualizerPalette(settings.palette, theme),
+    })
+    applyResponsiveLayout(terminalWidth, compactHeight)
+    renderer.requestRender()
+  }
+
   function seekFromPointer(event: MouseEvent): void {
     if (event.button !== 0 || progressDuration === null || !options.onSeek) return
     const barStart = progress.screenX + progressBarOffset
@@ -280,7 +291,7 @@ export function createPlayerPanel(
   function applyResponsiveLayout(width: number, isCompactHeight: boolean): void {
     terminalWidth = width
     compactHeight = isCompactHeight
-    root.height = compactHeight ? 3 : visualizerEnabled ? 8 : 5
+    root.height = compactHeight ? 3 : visualizerEnabled ? 5 + visualizerSettings.height : 5
     root.paddingX = compactHeight ? 1 : 2
     primary.justifyContent = "center"
     title.flexGrow = 0
@@ -299,6 +310,7 @@ export function createPlayerPanel(
     render,
     renderAudioAnalysis,
     setVisualizerEnabled,
+    setVisualizerSettings,
     applyResponsiveLayout,
   }
 }
