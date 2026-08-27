@@ -15,6 +15,7 @@ import type {
   AppleLibraryPlaylist,
   ApplePlaylist,
   ApplePlaylistDetails,
+  ApplePersonalSongRating,
   AppleSongContext,
   AppleTrackDetails,
   AudioQuality,
@@ -375,6 +376,78 @@ export class AppleCatalogProvider implements MusicProvider<AppleCatalogTrack> {
     }))
   }
 
+  async getPersonalSongRating(
+    songResourceId: string,
+    options: Pick<SearchOptions, "signal"> = {},
+  ): Promise<ApplePersonalSongRating | null> {
+    if (!isResourceId(songResourceId)) {
+      throw new AppleCatalogError("invalid_request")
+    }
+    return this.requestPersonalized(options, async (developerToken, musicUserToken, signal) => {
+      const response = await this.fetchImpl(
+        new URL(`/v1/me/ratings/songs/${songResourceId}`, APPLE_API_ORIGIN),
+        {
+          method: "GET",
+          headers: personalizedHeaders(developerToken, musicUserToken),
+          redirect: "manual",
+          signal,
+        },
+      )
+      if (response.status === 404) return null
+      if (!response.ok) throw new AppleCatalogError("unavailable")
+      return decodePersonalSongRating(await readBoundedJson(response))
+    })
+  }
+
+  async setPersonalSongRating(
+    songResourceId: string,
+    rating: ApplePersonalSongRating,
+    options: Pick<SearchOptions, "signal"> = {},
+  ): Promise<void> {
+    if (!isResourceId(songResourceId) || (rating !== -1 && rating !== 1)) {
+      throw new AppleCatalogError("invalid_request")
+    }
+    return this.requestPersonalized(options, async (developerToken, musicUserToken, signal) => {
+      const response = await this.fetchImpl(
+        new URL(`/v1/me/ratings/songs/${songResourceId}`, APPLE_API_ORIGIN),
+        {
+          method: "PUT",
+          headers: {
+            ...personalizedHeaders(developerToken, musicUserToken),
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ type: "ratings", attributes: { value: rating } }),
+          redirect: "manual",
+          signal,
+        },
+      )
+      if (!response.ok) throw new AppleCatalogError("unavailable")
+    })
+  }
+
+  async deletePersonalSongRating(
+    songResourceId: string,
+    options: Pick<SearchOptions, "signal"> = {},
+  ): Promise<void> {
+    if (!isResourceId(songResourceId)) {
+      throw new AppleCatalogError("invalid_request")
+    }
+    return this.requestPersonalized(options, async (developerToken, musicUserToken, signal) => {
+      const response = await this.fetchImpl(
+        new URL(`/v1/me/ratings/songs/${songResourceId}`, APPLE_API_ORIGIN),
+        {
+          method: "DELETE",
+          headers: personalizedHeaders(developerToken, musicUserToken),
+          redirect: "manual",
+          signal,
+        },
+      )
+      if (!response.ok && response.status !== 404) {
+        throw new AppleCatalogError("unavailable")
+      }
+    })
+  }
+
   private async requestCatalog<T>(
     options: Pick<SearchOptions, "signal">,
     operation: (developerToken: string, signal: AbortSignal) => Promise<T>,
@@ -404,6 +477,22 @@ export class AppleCatalogProvider implements MusicProvider<AppleCatalogTrack> {
       }
       throw new AppleCatalogError("unavailable")
     }
+  }
+
+  private async requestPersonalized<T>(
+    options: Pick<SearchOptions, "signal">,
+    operation: (
+      developerToken: string,
+      musicUserToken: string,
+      signal: AbortSignal,
+    ) => Promise<T>,
+  ): Promise<T> {
+    return this.requestCatalog(options, async (developerToken, signal) => {
+      if (!this.useMusicUserToken) throw new AppleCatalogError("unavailable")
+      return this.useMusicUserToken((musicUserToken) =>
+        operation(developerToken, musicUserToken, signal)
+      )
+    })
   }
 
   private async requestAlbum(
@@ -643,6 +732,30 @@ function requireCollection(
     throw new AppleCatalogError("invalid_response")
   }
   return root as Record<string, unknown> & { data: unknown[] }
+}
+
+function personalizedHeaders(
+  developerToken: string,
+  musicUserToken: string,
+): Record<string, string> {
+  return {
+    accept: "application/json",
+    authorization: `Bearer ${developerToken}`,
+    "music-user-token": musicUserToken,
+  }
+}
+
+function decodePersonalSongRating(value: unknown): ApplePersonalSongRating | null {
+  const data = requireCollection(value).data
+  if (data.length === 0) return null
+  if (data.length !== 1) throw new AppleCatalogError("invalid_response")
+  const rating = asRecord(data[0])
+  const attributes = rating && asRecord(rating.attributes)
+  const ratingValue = attributes?.value
+  if (rating?.type !== "ratings" || (ratingValue !== -1 && ratingValue !== 1)) {
+    throw new AppleCatalogError("invalid_response")
+  }
+  return ratingValue
 }
 
 function decodeCollection<T>(

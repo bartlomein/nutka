@@ -91,6 +91,8 @@ export interface AppleCatalogTrack extends Track {
   }
 }
 
+export type ApplePersonalSongRating = -1 | 1
+
 export interface AppleCatalogAlbumSummary {
   id: string
   title: string

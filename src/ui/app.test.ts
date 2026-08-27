@@ -389,6 +389,15 @@ async function createApp(
       playlist: ApplePlaylist,
       options?: SearchOptions,
     ) => Promise<SearchPage<AppleCatalogTrack>>
+    getSongLiked?: (
+      songResourceId: string,
+      options?: Pick<SearchOptions, "signal">,
+    ) => Promise<boolean>
+    setSongLiked?: (
+      songResourceId: string,
+      liked: boolean,
+      options?: Pick<SearchOptions, "signal">,
+    ) => Promise<void>
     playback?: PlaybackController<AppleCatalogTrack>
     visualizerSettings?: VisualizerSettings
     saveVisualizerSettings?: (settings: VisualizerSettings) => void
@@ -416,6 +425,8 @@ async function createApp(
     onGetHomeSections: options.getHomeSections,
     onGetLibraryPlaylists: options.getLibraryPlaylists,
     onGetPlaylistTracks: options.getPlaylistTracks,
+    onGetSongLiked: options.getSongLiked,
+    onSetSongLiked: options.setSongLiked,
     onQuit,
     onAppleSignIn: apple.onSignIn,
     onAppleSignOut: apple.onSignOut,
@@ -1219,6 +1230,92 @@ describe("Nutka TUI", () => {
     setup!.mockInput.pressKey("q")
     await setup!.renderOnce()
     expect(setup!.captureCharFrame()).toContain("Second Track")
+  })
+
+  test("loads and toggles the current song like with optimistic feedback", async () => {
+    const playback = new FakePlaybackController()
+    const initialLike = deferred<boolean>()
+    const savedLike = deferred<void>()
+    const loads: string[] = []
+    const saves: Array<{ resourceId: string; liked: boolean }> = []
+    await createApp({
+      tracks: catalogTracks,
+      playback,
+      getSongLiked: async (resourceId) => {
+        loads.push(resourceId)
+        return initialLike.promise
+      },
+      setSongLiked: async (resourceId, liked) => {
+        saves.push({ resourceId, liked })
+        return savedLike.promise
+      },
+    }, undefined, { onSignIn: () => {} })
+    app!.setAppleAuthStatus({ state: "signedIn", storefront: "us" })
+
+    playback.confirm({
+      status: "playing",
+      currentTrack: catalogTracks[0]!,
+      queue: [],
+      positionSeconds: 0,
+      durationSeconds: catalogTracks[0]!.durationSeconds,
+      errorCode: null,
+    })
+    await setup!.renderOnce()
+    expect(loads).toEqual(["1"])
+    expect(setup!.captureCharFrame()).toContain("checking like")
+
+    initialLike.resolve(false)
+    await Bun.sleep(0)
+    await setup!.renderOnce()
+    expect(setup!.captureCharFrame()).toContain("♡  First Track")
+
+    setup!.mockInput.pressKey("l")
+    await setup!.renderOnce()
+    expect(saves).toEqual([{ resourceId: "1", liked: true }])
+    expect(setup!.captureCharFrame()).toContain("♥ saving  First Track")
+
+    savedLike.resolve()
+    await Bun.sleep(0)
+    await setup!.renderOnce()
+    expect(setup!.captureCharFrame()).toContain("♥ liked  First Track")
+
+    setup!.mockInput.pressKey("l")
+    await Bun.sleep(0)
+    await setup!.renderOnce()
+    expect(saves).toEqual([
+      { resourceId: "1", liked: true },
+      { resourceId: "1", liked: false },
+    ])
+    expect(setup!.captureCharFrame()).toContain("♡  First Track")
+  })
+
+  test("rolls back a failed like change without exposing the service error", async () => {
+    const playback = new FakePlaybackController()
+    await createApp({
+      tracks: catalogTracks,
+      playback,
+      getSongLiked: async () => true,
+      setSongLiked: async () => {
+        throw new Error("private service details")
+      },
+    }, undefined, { onSignIn: () => {} })
+    app!.setAppleAuthStatus({ state: "signedIn", storefront: "us" })
+    playback.confirm({
+      status: "playing",
+      currentTrack: catalogTracks[0]!,
+      queue: [],
+      positionSeconds: 0,
+      durationSeconds: catalogTracks[0]!.durationSeconds,
+      errorCode: null,
+    })
+    await Bun.sleep(0)
+
+    setup!.mockInput.pressKey("l")
+    await Bun.sleep(0)
+    await setup!.renderOnce()
+    const frame = setup!.captureCharFrame()
+    expect(frame).toContain("♥ like failed  First Track")
+    expect(frame).not.toContain("private service details")
   })
 
   test("coalesces repeated scrubbing to the latest bounded seek", async () => {

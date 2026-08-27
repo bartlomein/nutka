@@ -39,6 +39,8 @@ describe("PlayerPanel", () => {
       repeatMode: "all",
       canSetShuffleMode: true,
       canSetRepeatMode: true,
+      liked: false,
+      likeStatus: "ready",
     })
     player.renderAudioAnalysis({
       sequence: 1,
@@ -49,7 +51,7 @@ describe("PlayerPanel", () => {
 
     await setup.renderOnce()
     const frame = setup.captureCharFrame()
-    expect(frame).toContain("▶  Angel")
+    expect(frame).toContain("▶  ♡  Angel")
     expect(frame).toContain("Angel")
     expect(frame).toContain("Massive Attack  ·  Mezzanine")
     expect(frame).toContain("1:42")
@@ -63,7 +65,7 @@ describe("PlayerPanel", () => {
     expect(frame).toContain("REPEAT ALL")
     expect(frame).not.toContain("SPACE  PAUSE")
     const lines = frame.split("\n")
-    expect(lines.find((line) => line.includes("▶  Angel"))?.indexOf("▶")).toBeGreaterThan(40)
+    expect(lines.find((line) => line.includes("▶  ♡  Angel"))?.indexOf("▶")).toBeGreaterThan(40)
     expect(
       lines.find((line) => line.includes("Massive Attack  ·  Mezzanine"))
         ?.indexOf("Massive Attack"),
@@ -88,6 +90,8 @@ describe("PlayerPanel", () => {
       repeatMode: "one",
       canSetShuffleMode: true,
       canSetRepeatMode: true,
+      liked: true,
+      likeStatus: "ready",
     })
 
     await setup.renderOnce()
@@ -120,6 +124,8 @@ describe("PlayerPanel", () => {
       repeatMode: "none",
       canSetShuffleMode: true,
       canSetRepeatMode: true,
+      liked: false,
+      likeStatus: "unavailable",
     })
     player.renderAudioAnalysis({
       sequence: 1,
@@ -173,6 +179,8 @@ describe("PlayerPanel", () => {
       repeatMode: "none",
       canSetShuffleMode: true,
       canSetRepeatMode: true,
+      liked: false,
+      likeStatus: "unavailable",
     })
 
     await setup.renderOnce()
@@ -209,6 +217,8 @@ describe("PlayerPanel", () => {
       repeatMode: "none",
       canSetShuffleMode: false,
       canSetRepeatMode: false,
+      liked: false,
+      likeStatus: "unavailable",
     })
 
     await setup.renderOnce()
@@ -238,10 +248,13 @@ describe("PlayerPanel", () => {
       repeatMode: "none",
       canSetShuffleMode: true,
       canSetRepeatMode: true,
+      liked: true,
+      likeStatus: "saving",
     })
 
     await setup.renderOnce()
     const frame = setup.captureCharFrame()
+    expect(frame).toContain("♥ saving  Angel")
     expect(frame).toContain("SHUFFLE OFF")
     expect(frame).toContain("REPEAT OFF")
     expect(frame).toContain("│◀ Ⅱ ▶│")
@@ -266,6 +279,8 @@ describe("PlayerPanel", () => {
       repeatMode: "one" as const,
       canSetShuffleMode: true,
       canSetRepeatMode: true,
+      liked: false,
+      likeStatus: "ready" as const,
     }
 
     player.render(state)

@@ -33,6 +33,8 @@ export interface PlayerPanelState {
   repeatMode: PlaybackRepeatMode
   canSetShuffleMode: boolean
   canSetRepeatMode: boolean
+  liked: boolean
+  likeStatus: "unavailable" | "loading" | "ready" | "saving" | "error"
 }
 
 export interface PlayerPanel {
@@ -177,7 +179,7 @@ export function createPlayerPanel(
           ? "Ⅱ"
           : "○"
     title.content = track
-      ? track.title
+      ? `${likeStatusPrefix(state)}${track.title}`
       : state.errorMessage
         ? "playback unavailable"
           : "nothing playing"
@@ -312,6 +314,21 @@ export function createPlayerPanel(
     setVisualizerEnabled,
     setVisualizerSettings,
     applyResponsiveLayout,
+  }
+}
+
+function likeStatusPrefix(state: PlayerPanelState): string {
+  switch (state.likeStatus) {
+    case "unavailable":
+      return ""
+    case "loading":
+      return "◌ checking like  "
+    case "ready":
+      return state.liked ? "♥ liked  " : "♡  "
+    case "saving":
+      return state.liked ? "♥ saving  " : "♡ saving  "
+    case "error":
+      return state.liked ? "♥ like failed  " : "♡ like failed  "
   }
 }
 

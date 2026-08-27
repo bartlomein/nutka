@@ -32,208 +32,91 @@ import type {
   Track,
 } from "../core/types"
 import type { AppleAuthStatus } from "../services/apple-auth"
-import { formatAudioQuality } from "./audio-quality"
+import {
+  appleSongResourceId,
+  appendUniqueBrowseItems,
+  appendUniqueHomeSections,
+  appendUniquePlaylists,
+  appendUniqueTracks,
+  artistDisplayRows,
+  artistPageStatusLine,
+  artistRowContent,
+  artistRowId,
+  artistSections,
+  artistSelectableRows,
+  browseAlbumEmptyMessage,
+  browseFooterHelp,
+  browsePageHasError,
+  browsePageTracks,
+  createArtistSectionStates,
+  filterPlaylistValues,
+  formatDuration,
+  getRowStart,
+  isAppleCatalogTrack,
+  isPlayableAppleTrack,
+  isPlaylistLanding,
+  isSelectableArtistRow,
+  playlistDisplayRows,
+  playlistLandingUnavailable,
+  playlistLoading,
+  playlistLoadingMore,
+  type AlbumBrowsePage,
+  type ArtistBrowsePage,
+  type BrowsePage,
+} from "./app/browse"
+import { getPaletteCommands, type Command } from "./app/commands"
+import {
+  albumEmptyMessage,
+  albumFooterHelp,
+  appleAuthProgressCopy,
+  appleAuthStatusLabel,
+  appleAuthSuccessCopy,
+  compactAppleAuthStatusLabel,
+  destinationLabel,
+  emptyMessage,
+  footerHelp,
+  formatInfoTarget,
+  isAppleAuthProgress,
+  playbackErrorMessage,
+  playlistDetailFooterHelp,
+  playlistEmptyMessage,
+  playlistFooterHelp,
+  playlistTrackEmptyMessage,
+  pluralize,
+  searchEmptyMessage,
+  searchFooterHelp,
+  type InfoTarget,
+} from "./app/copy"
+import {
+  createOverlay,
+  createTrackRow,
+  maxContextRows,
+  maxPaletteRows,
+  maxTrackRows,
+  setTrackRowColor,
+  setTrackRowContent,
+  text,
+  type PaletteRow,
+  type TrackRow,
+} from "./app/renderables"
 import { createPlayerPanel } from "./player"
 import { theme } from "./theme"
-import {
-  visualizerDefinition,
-  visualizerHeights,
-  visualizerKinds,
-  visualizerPalettes,
-  type VisualizerSettings,
-} from "./visualizer"
+import type { VisualizerSettings } from "./visualizer"
 import { resolveVisualizerPalette } from "./visualizer/palettes"
 import { defaultVisualizerSettings } from "./visualizer/preferences"
+import {
+  cycleVisualizerSettings,
+  visualizerPreviewBands,
+  visualizerSettingCount,
+  visualizerSettingRows,
+  type VisualizerSettingsDialog,
+} from "./visualizer/settings-view"
 import { formatSpectrumFrame } from "./visualizer/spectrum"
 
-const maxTrackRows = 30
-const maxPaletteRows = 7
+export { formatDuration } from "./app/browse"
+
 const maxPlaybackQueueTracks = 100
 const maxPlaylistShufflePages = 4
-const maxContextRows = 8
-const visualizerSettingCount = 4
-const visualizerPreviewBands = [
-  80, 112, 168, 224, 188, 136, 104, 152,
-  208, 248, 176, 120, 88, 128, 184, 232,
-  196, 144, 96, 116, 164, 212, 180, 132,
-  92, 124, 172, 220, 156, 108, 76, 100,
-] as const
-
-const artistSections = [
-  { name: "top-songs", title: "TOP SONGS" },
-  { name: "latest-release", title: "LATEST RELEASE" },
-  { name: "full-albums", title: "ALBUMS" },
-  { name: "singles", title: "SINGLES & EPS" },
-  { name: "similar-artists", title: "SIMILAR ARTISTS" },
-] as const satisfies readonly {
-  name: AppleArtistSectionName
-  title: string
-}[]
-
-type CommandId =
-  | "home"
-  | "library"
-  | "playlists"
-  | "search"
-  | "queue"
-  | "browse-now-playing"
-  | "album"
-  | "info"
-  | "filter"
-  | "apple-sign-in"
-  | "apple-sign-out"
-  | "apple-retry-restore"
-  | "apple-cleanup"
-  | "shuffle"
-  | "repeat"
-  | "visualizer"
-  | "visualizer-settings"
-  | "help"
-  | "quit"
-
-interface Command {
-  id: CommandId
-  title: string
-  description: string
-  shortcut: string
-  keywords: string
-}
-
-const commands: readonly Command[] = [
-  {
-    id: "home",
-    title: "Go to Home",
-    description: "Browse personalized recommendations",
-    shortcut: "g h",
-    keywords: "home personalized recommendations for you",
-  },
-  {
-    id: "library",
-    title: "Go to Library",
-    description: "Browse saved tracks",
-    shortcut: "g l",
-    keywords: "library tracks browse saved",
-  },
-  {
-    id: "playlists",
-    title: "Go to Playlists",
-    description: "Browse saved playlists",
-    shortcut: "g p",
-    keywords: "playlists saved library",
-  },
-  {
-    id: "search",
-    title: "Search music",
-    description: "Find title, artist, or album",
-    shortcut: "g s",
-    keywords: "search find catalog music",
-  },
-  {
-    id: "queue",
-    title: "Go to Queue",
-    description: "See what plays next",
-    shortcut: "g q",
-    keywords: "queue upcoming next",
-  },
-  {
-    id: "browse-now-playing",
-    title: "Browse Now Playing",
-    description: "Open the current album or artist",
-    shortcut: "g n",
-    keywords: "now playing current song album artist context browse",
-  },
-  {
-    id: "filter",
-    title: "Filter current list",
-    description: "Narrow visible tracks",
-    shortcut: "/",
-    keywords: "filter current list narrow",
-  },
-  {
-    id: "info",
-    title: "Show Item Info",
-    description: "Inspect the selected item",
-    shortcut: "i",
-    keywords: "info details metadata selected track album playlist",
-  },
-  {
-    id: "album",
-    title: "Go to Album",
-    description: "Open the selected song's album",
-    shortcut: "a",
-    keywords: "album release selected song open",
-  },
-  {
-    id: "apple-sign-in",
-    title: "Sign in to Apple Music",
-    description: "Authorize this device",
-    shortcut: "",
-    keywords: "apple music login sign in authorize account",
-  },
-  {
-    id: "apple-retry-restore",
-    title: "Retry Apple Music keyring",
-    description: "Try loading the saved login again",
-    shortcut: "",
-    keywords: "apple music retry keyring restore login",
-  },
-  {
-    id: "apple-cleanup",
-    title: "Remove incomplete Apple login",
-    description: "Clean up after a keyring save failure",
-    shortcut: "",
-    keywords: "apple music cleanup remove incomplete keyring save failed",
-  },
-  {
-    id: "apple-sign-out",
-    title: "Sign out of Apple Music",
-    description: "Remove login from this device",
-    shortcut: "",
-    keywords: "apple music logout sign out account",
-  },
-  {
-    id: "shuffle",
-    title: "Toggle Shuffle",
-    description: "Shuffle or restore the current queue order",
-    shortcut: "s",
-    keywords: "shuffle random playback mode queue order",
-  },
-  {
-    id: "repeat",
-    title: "Cycle Repeat Mode",
-    description: "Repeat off, all songs, or one song",
-    shortcut: "r",
-    keywords: "repeat loop all one song playback mode",
-  },
-  {
-    id: "visualizer",
-    title: "Toggle visualizer",
-    description: "Show or hide audio visualization",
-    shortcut: "v",
-    keywords: "visualizer spectrum audio show hide toggle",
-  },
-  {
-    id: "visualizer-settings",
-    title: "Visualizer settings",
-    description: "Choose visualization, style, palette, and height",
-    shortcut: "shift+v",
-    keywords: "visualizer settings configure style palette color height",
-  },
-  {
-    id: "help",
-    title: "Keyboard help",
-    description: "Show all shortcuts",
-    shortcut: "?",
-    keywords: "help keyboard shortcuts keys",
-  },
-  {
-    id: "quit",
-    title: "Quit Nutka",
-    description: "Close the player",
-    shortcut: "q",
-    keywords: "quit exit close",
-  },
-]
 
 interface NutkaAppOptions {
   tracks: readonly Track[]
@@ -269,6 +152,15 @@ interface NutkaAppOptions {
     playlist: ApplePlaylist,
     options?: SearchOptions,
   ) => Promise<SearchPage<AppleCatalogTrack>>
+  onGetSongLiked?: (
+    songResourceId: string,
+    options?: Pick<SearchOptions, "signal">,
+  ) => Promise<boolean>
+  onSetSongLiked?: (
+    songResourceId: string,
+    liked: boolean,
+    options?: Pick<SearchOptions, "signal">,
+  ) => Promise<void>
   onAppleSignIn?: () => void
   onAppleSignOut?: () => void
   onAppleSignInCancel?: () => void
@@ -277,19 +169,6 @@ interface NutkaAppOptions {
   visualizerSettings?: VisualizerSettings
   onSaveVisualizerSettings?: (settings: VisualizerSettings) => void
 }
-
-interface TrackRow {
-  box: BoxRenderable
-  title: TextRenderable
-  artist: TextRenderable
-  album: TextRenderable
-  year: TextRenderable
-  time: TextRenderable
-}
-
-type PlaylistDisplayRow =
-  | { kind: "heading"; title: string }
-  | { kind: "playlist"; playlist: ApplePlaylist }
 
 type ContextTarget =
   | { kind: "album"; album: AppleCatalogAlbumSummary }
@@ -302,70 +181,9 @@ interface ContextPickerState {
   selectedIndex: number
 }
 
-interface VisualizerSettingsDialog {
-  original: VisualizerSettings
-  draft: VisualizerSettings
-  selectedIndex: number
-  error?: string
-}
-
-type ArtistBrowseItem =
-  | AppleCatalogTrack
-  | AppleCatalogAlbumSummary
-  | AppleCatalogArtist
-
-interface ArtistSectionState {
-  status: "loading" | "loadingMore" | "ready" | "error"
-  items: readonly ArtistBrowseItem[]
-  nextCursor: string | null
-}
-
-interface ArtistBrowsePage {
-  kind: "artist"
-  artist: AppleCatalogArtist
-  sections: Record<AppleArtistSectionName, ArtistSectionState>
-  selectedId: string | null
-  selectionTouched: boolean
-  requests: Set<AbortController>
-}
-
-interface AlbumBrowsePage {
-  kind: "album"
-  summary: AppleCatalogAlbumSummary
-  status: "loading" | "ready" | "error"
-  album?: AppleCatalogAlbum
-  selectedId: string | null
-  preferredSongResourceId?: string
-  requests: Set<AbortController>
-}
-
-type BrowsePage = ArtistBrowsePage | AlbumBrowsePage
-
-type ArtistDisplayRow =
-  | { kind: "heading"; title: string }
-  | { kind: "message"; title: string; section: AppleArtistSectionName }
-  | { kind: "track"; track: AppleCatalogTrack; section: "top-songs" }
-  | {
-      kind: "album"
-      album: AppleCatalogAlbumSummary
-      section: "latest-release" | "full-albums" | "singles"
-    }
-  | { kind: "artist"; artist: AppleCatalogArtist; section: "similar-artists" }
-
-type InfoTarget =
-  | {
-      kind: "track"
-      track: Track
-      album?: AppleCatalogAlbum
-      playlist?: ApplePlaylist
-    }
-  | { kind: "album"; album: AppleCatalogAlbum }
-  | { kind: "playlist"; playlist: ApplePlaylist }
-
-interface PaletteRow {
-  box: BoxRenderable
-  title: TextRenderable
-  shortcut: TextRenderable
+interface SongLikeState {
+  liked: boolean
+  status: "loading" | "ready" | "saving" | "error"
 }
 
 export interface NutkaApp {
@@ -432,6 +250,8 @@ export function createNutkaApp(
   let pendingSeekSeconds: number | null = null
   let seekAnchorSeconds: number | null = null
   let seekRunning = false
+  const songLikeStates = new Map<string, SongLikeState>()
+  const songLikeRequests = new Set<AbortController>()
   let infoTarget: InfoTarget | undefined
   let visualizerEnabled = true
   let visualizerSettings = options.visualizerSettings ?? defaultVisualizerSettings
@@ -743,7 +563,7 @@ export function createNutkaApp(
     ["", theme.text],
     ["LISTS", theme.accent],
     ["j/k or ↑/↓  move      enter  play or open", theme.text],
-    ["b/s/n       previous / shuffle / next      r repeat", theme.text],
+    ["b/s/n       previous / shuffle / next      r repeat   l like", theme.text],
     ["i           item info /      filter", theme.text],
     ["←/→         seek 5s   shift+←/→  seek 15s", theme.text],
     ["esc         back to Home or cancel pending g", theme.text],
@@ -841,6 +661,7 @@ export function createNutkaApp(
     if (!snapshot.currentTrack || snapshot.currentTrack.id !== previousTrackId) {
       pendingSeekSeconds = null
       seekAnchorSeconds = null
+      if (snapshot.currentTrack) void loadSongLike(snapshot.currentTrack)
     } else if (
       pendingSeekSeconds === null &&
       seekAnchorSeconds !== null &&
@@ -861,6 +682,93 @@ export function createNutkaApp(
       canSetShuffleMode: snapshot.canSetShuffleMode,
       canSetRepeatMode: snapshot.canSetRepeatMode,
     })
+  }
+
+  async function loadSongLike(track: AppleCatalogTrack): Promise<void> {
+    const resourceId = track.apple.resourceId
+    if (
+      appleAuthStatus.state !== "signedIn" ||
+      !options.onGetSongLiked ||
+      songLikeStates.has(resourceId)
+    ) {
+      return
+    }
+
+    const controller = new AbortController()
+    songLikeRequests.add(controller)
+    songLikeStates.set(resourceId, { liked: false, status: "loading" })
+    try {
+      const liked = await options.onGetSongLiked(resourceId, { signal: controller.signal })
+      if (controller.signal.aborted) return
+      songLikeStates.set(resourceId, { liked, status: "ready" })
+      renderState()
+    } catch {
+      if (controller.signal.aborted) {
+        songLikeStates.delete(resourceId)
+        return
+      }
+      songLikeStates.set(resourceId, { liked: false, status: "error" })
+      renderState()
+    } finally {
+      songLikeRequests.delete(controller)
+    }
+  }
+
+  async function toggleCurrentSongLiked(): Promise<void> {
+    if (
+      appleAuthStatus.state !== "signedIn" ||
+      !options.onGetSongLiked ||
+      !options.onSetSongLiked
+    ) {
+      return
+    }
+    const track = state.playback.currentTrackId
+      ? trackRegistry.get(state.playback.currentTrackId)
+      : undefined
+    if (!isPlayableAppleTrack(track)) return
+
+    const resourceId = track.apple.resourceId
+    const current = songLikeStates.get(resourceId)
+    if (!current) {
+      void loadSongLike(track)
+      renderState()
+      return
+    }
+    if (current.status === "loading" || current.status === "saving") return
+
+    const pending: SongLikeState = { liked: !current.liked, status: "saving" }
+    const controller = new AbortController()
+    songLikeRequests.add(controller)
+    songLikeStates.set(resourceId, pending)
+    renderState()
+    try {
+      await options.onSetSongLiked(resourceId, pending.liked, { signal: controller.signal })
+      if (controller.signal.aborted || songLikeStates.get(resourceId) !== pending) return
+      songLikeStates.set(resourceId, { liked: pending.liked, status: "ready" })
+      renderState()
+    } catch {
+      if (controller.signal.aborted || songLikeStates.get(resourceId) !== pending) return
+      songLikeStates.set(resourceId, { liked: current.liked, status: "error" })
+      renderState()
+    } finally {
+      songLikeRequests.delete(controller)
+    }
+  }
+
+  function canToggleCurrentSongLike(): boolean {
+    if (
+      appleAuthStatus.state !== "signedIn" ||
+      !options.onGetSongLiked ||
+      !options.onSetSongLiked
+    ) {
+      return false
+    }
+    const track = state.playback.currentTrackId
+      ? trackRegistry.get(state.playback.currentTrackId)
+      : undefined
+    if (!isPlayableAppleTrack(track)) return false
+    const like = songLikeStates.get(track.apple.resourceId)
+    return like?.status === "ready" || like?.status === "error"
   }
 
   function seekDuration(): number | null {
@@ -1869,9 +1777,9 @@ export function createNutkaApp(
         signal: controller.signal,
       })
       if (controller.signal.aborted || generation !== searchGeneration) return
-      const knownIds = new Set(searchTracks.map((track) => track.id))
-      const additions = page.items.filter((track) => !knownIds.has(track.id))
-      searchTracks = [...searchTracks, ...additions]
+      const nextTracks = appendUniqueTracks(searchTracks, page.items)
+      const additions = nextTracks.slice(searchTracks.length)
+      searchTracks = nextTracks
       for (const track of additions) trackRegistry.set(track.id, track)
       catalogSearch = {
         ...catalogSearch,
@@ -2207,6 +2115,10 @@ export function createNutkaApp(
     const currentTrack = state.playback.currentTrackId
       ? trackRegistry.get(state.playback.currentTrackId)
       : undefined
+    const currentSongResourceId = appleSongResourceId(currentTrack)
+    const currentSongLike = currentSongResourceId
+      ? songLikeStates.get(currentSongResourceId)
+      : undefined
     player.render({
       status: state.playback.status,
       currentTrack: currentTrack ?? null,
@@ -2223,19 +2135,30 @@ export function createNutkaApp(
       repeatMode: state.playback.repeatMode,
       canSetShuffleMode: state.playback.canSetShuffleMode,
       canSetRepeatMode: state.playback.canSetRepeatMode,
+      liked: currentSongLike?.liked ?? false,
+      likeStatus:
+        appleAuthStatus.state === "signedIn" &&
+        options.onGetSongLiked &&
+        options.onSetSongLiked &&
+        currentSongResourceId
+          ? currentSongLike?.status ?? "loading"
+          : "unavailable",
     })
 
     paletteOverlay.visible = state.mode.type === "palette"
     const paletteCommands = getPaletteCommands(
       state.mode.type === "palette" ? state.mode.query : "",
-      appleAuthStatus,
-      Boolean(options.onAppleSignIn),
-      canOpenSelectedAlbum(),
-      canOpenSelectedInfo(),
-      canBrowseNowPlaying(),
-      !activeBrowsePage,
-      state.playback.canSetShuffleMode,
-      state.playback.canSetRepeatMode,
+      {
+        appleAuthStatus,
+        canAppleAuth: Boolean(options.onAppleSignIn),
+        canOpenAlbum: canOpenSelectedAlbum(),
+        canOpenInfo: canOpenSelectedInfo(),
+        canBrowseNowPlaying: canBrowseNowPlaying(),
+        canFilter: !activeBrowsePage,
+        canSetShuffleMode: state.playback.canSetShuffleMode,
+        canSetRepeatMode: state.playback.canSetRepeatMode,
+        canToggleCurrentSongLike: canToggleCurrentSongLike(),
+      },
     )
     const paletteRowCount = Math.max(
       1,
@@ -2374,7 +2297,7 @@ export function createNutkaApp(
     const compactHelpLines = [
       "ctrl+p commands · g n now playing",
       "↑/↓ move · i info · / fuzzy filter",
-      "b/s/n previous · shuffle · next   r repeat",
+      "b/s/n previous · shuffle · next · r repeat · l like",
       "←/→ seek 5s · shift+←/→ 15s",
       "g s search · a album · m more · v visualizer · V settings · ? help",
     ]
@@ -2516,6 +2439,10 @@ export function createNutkaApp(
         state = reduceAppState(state, { type: "close-mode" })
         cycleRepeatMode()
         return
+      case "like":
+        state = reduceAppState(state, { type: "close-mode" })
+        void toggleCurrentSongLiked()
+        return
       case "visualizer":
         state = reduceAppState(state, { type: "close-mode" })
         toggleVisualizer()
@@ -2602,17 +2529,17 @@ export function createNutkaApp(
 
   function handlePaletteKey(key: KeyEvent): void {
     if (state.mode.type !== "palette") return
-    const paletteCommands = getPaletteCommands(
-      state.mode.query,
+    const paletteCommands = getPaletteCommands(state.mode.query, {
       appleAuthStatus,
-      Boolean(options.onAppleSignIn),
-      canOpenSelectedAlbum(),
-      canOpenSelectedInfo(),
-      canBrowseNowPlaying(),
-      !currentBrowsePage(),
-      state.playback.canSetShuffleMode,
-      state.playback.canSetRepeatMode,
-    )
+      canAppleAuth: Boolean(options.onAppleSignIn),
+      canOpenAlbum: canOpenSelectedAlbum(),
+      canOpenInfo: canOpenSelectedInfo(),
+      canBrowseNowPlaying: canBrowseNowPlaying(),
+      canFilter: !currentBrowsePage(),
+      canSetShuffleMode: state.playback.canSetShuffleMode,
+      canSetRepeatMode: state.playback.canSetRepeatMode,
+      canToggleCurrentSongLike: canToggleCurrentSongLike(),
+    })
 
     if (key.name === "escape") {
       dispatch({ type: "close-mode" })
@@ -2838,6 +2765,10 @@ export function createNutkaApp(
       playPreviousTrack()
       return
     }
+    if (isPlainKey(key, "l")) {
+      void toggleCurrentSongLiked()
+      return
+    }
     if (isPlainKey(key, "r")) {
       cycleRepeatMode()
       return
@@ -3043,46 +2974,12 @@ export function createNutkaApp(
 
   function cycleVisualizerSetting(delta: number): void {
     if (!visualizerSettingsDialog) return
-    const current = visualizerSettingsDialog.draft
-    let draft: VisualizerSettings
-    switch (visualizerSettingsDialog.selectedIndex) {
-      case 0: {
-        const kind = cycleChoice(visualizerKinds, current.kind, delta)
-        const definition = visualizerDefinition(kind)
-        draft = kind === current.kind
-          ? current
-          : {
-              ...current,
-              kind,
-              style: definition.styles[0]?.value ?? current.style,
-            }
-        break
-      }
-      case 1:
-        draft = {
-          ...current,
-          style: cycleChoice(
-            visualizerDefinition(current.kind).styles,
-            current.style,
-            delta,
-          ),
-        }
-        break
-      case 2:
-        draft = {
-          ...current,
-          palette: cycleChoice(visualizerPalettes, current.palette, delta),
-        }
-        break
-      case 3:
-        draft = {
-          ...current,
-          height: cycleChoice(visualizerHeights, current.height, delta),
-        }
-        break
-      default:
-        return
-    }
+    const draft = cycleVisualizerSettings(
+      visualizerSettingsDialog.draft,
+      visualizerSettingsDialog.selectedIndex,
+      delta,
+    )
+    if (!draft) return
     visualizerSettingsDialog.draft = draft
     visualizerSettingsDialog.error = undefined
     player.setVisualizerSettings(draft)
@@ -3174,7 +3071,16 @@ export function createNutkaApp(
       authSuccessVisible =
         status.state === "signedIn" &&
         ["authorizing", "validating", "saving"].includes(appleAuthStatus.state)
+      if (status.state !== "signedIn") {
+        for (const request of songLikeRequests) request.abort()
+        songLikeRequests.clear()
+        songLikeStates.clear()
+      }
       appleAuthStatus = status
+      if (status.state === "signedIn" && state.playback.currentTrackId) {
+        const track = trackRegistry.get(state.playback.currentTrackId)
+        if (isPlayableAppleTrack(track)) void loadSongLike(track)
+      }
       if (state.mode.type === "palette") {
         state = reduceAppState(state, {
           type: "edit-palette",
@@ -3202,6 +3108,8 @@ export function createNutkaApp(
       randomPlaylistRequest?.abort()
       contextGeneration++
       contextRequest?.abort()
+      for (const request of songLikeRequests) request.abort()
+      songLikeRequests.clear()
       for (const request of browseRequests) request.abort()
       browseRequests.clear()
       renderer.keyInput.off("keypress", handleKeypress)
@@ -3211,701 +3119,6 @@ export function createNutkaApp(
       app.destroyRecursively()
     },
   }
-}
-
-function text(
-  renderer: CliRenderer,
-  id: string,
-  content: string,
-  fg: string,
-  bg?: string,
-): TextRenderable {
-  return new TextRenderable(renderer, {
-    id,
-    content,
-    fg,
-    bg,
-    height: 1,
-    truncate: true,
-  })
-}
-
-function createOverlay(
-  renderer: CliRenderer,
-  id: string,
-  zIndex: number,
-): BoxRenderable {
-  return new BoxRenderable(renderer, {
-    id,
-    position: "absolute",
-    top: 0,
-    left: 0,
-    width: "100%",
-    height: "100%",
-    zIndex,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: theme.overlay,
-    visible: false,
-  })
-}
-
-function createTrackRow(
-  renderer: CliRenderer,
-  id: string,
-  backgroundColor: string,
-): TrackRow {
-  const box = new BoxRenderable(renderer, {
-    id,
-    width: "100%",
-    height: 1,
-    flexDirection: "row",
-    columnGap: 2,
-    backgroundColor,
-  })
-  const title = text(renderer, `${id}-title`, "", theme.text)
-  const artist = text(renderer, `${id}-artist`, "", theme.text)
-  const album = text(renderer, `${id}-album`, "", theme.text)
-  const year = text(renderer, `${id}-year`, "", theme.text)
-  const time = text(renderer, `${id}-time`, "", theme.text)
-
-  title.width = "32%"
-  artist.width = "24%"
-  album.flexGrow = 1
-  year.width = 6
-  year.visible = false
-  time.width = 6
-  box.add(title)
-  box.add(artist)
-  box.add(album)
-  box.add(year)
-  box.add(time)
-  return { box, title, artist, album, year, time }
-}
-
-function setTrackRowContent(
-  row: TrackRow,
-  content: { title: string; artist: string; album: string; year?: string; time: string },
-): void {
-  row.title.content = content.title
-  row.artist.content = content.artist
-  row.album.content = content.album
-  row.year.content = content.year ?? ""
-  row.time.content = content.time
-}
-
-function setTrackRowColor(row: TrackRow, color: string): void {
-  row.title.fg = color
-  row.artist.fg = color
-  row.album.fg = color
-  row.year.fg = color
-  row.time.fg = color
-}
-
-function createArtistSectionStates(): Record<AppleArtistSectionName, ArtistSectionState> {
-  const loading = (): ArtistSectionState => ({
-    status: "loading",
-    items: [],
-    nextCursor: null,
-  })
-  return {
-    "top-songs": loading(),
-    "latest-release": loading(),
-    "full-albums": loading(),
-    singles: loading(),
-    "similar-artists": loading(),
-  }
-}
-
-function artistDisplayRows(page: ArtistBrowsePage): readonly ArtistDisplayRow[] {
-  return artistSections.flatMap(({ name, title }): readonly ArtistDisplayRow[] => {
-    const state = page.sections[name]
-    const rows: ArtistDisplayRow[] = [{ kind: "heading", title }]
-    for (const item of state.items) {
-      if (name === "top-songs" && isAppleCatalogTrack(item)) {
-        rows.push({ kind: "track", track: item, section: name })
-      } else if (
-        (name === "latest-release" || name === "full-albums" || name === "singles") &&
-        isAppleCatalogAlbumSummary(item)
-      ) {
-        rows.push({ kind: "album", album: item, section: name })
-      } else if (name === "similar-artists" && isAppleCatalogArtist(item)) {
-        rows.push({ kind: "artist", artist: item, section: name })
-      }
-    }
-    if (state.status === "loading") {
-      rows.push({ kind: "message", title: "loading...", section: name })
-    } else if (state.status === "loadingMore") {
-      rows.push({ kind: "message", title: "loading more...", section: name })
-    } else if (state.status === "error" && state.items.length === 0) {
-      rows.push({ kind: "message", title: "unavailable", section: name })
-    } else if (state.items.length === 0) {
-      rows.push({ kind: "message", title: "none available", section: name })
-    }
-    return rows
-  })
-}
-
-function artistSelectableRows(
-  page: ArtistBrowsePage,
-): readonly Exclude<ArtistDisplayRow, { kind: "heading" | "message" }>[] {
-  return artistDisplayRows(page).filter(isSelectableArtistRow)
-}
-
-function isSelectableArtistRow(
-  row: ArtistDisplayRow,
-): row is Exclude<ArtistDisplayRow, { kind: "heading" | "message" }> {
-  return row.kind === "track" || row.kind === "album" || row.kind === "artist"
-}
-
-function artistRowId(
-  row: Exclude<ArtistDisplayRow, { kind: "heading" | "message" }>,
-): string {
-  if (row.kind === "track") return `${row.section}:${row.track.id}`
-  if (row.kind === "album") return `${row.section}:${row.album.id}`
-  return `${row.section}:${row.artist.id}`
-}
-
-function artistRowContent(
-  row: Exclude<ArtistDisplayRow, { kind: "heading" | "message" }>,
-  selected: boolean,
-  width: number,
-): { title: string; artist: string; album: string; year: string; time: string } {
-  const marker = selected ? "›" : " "
-  if (row.kind === "track") {
-    const year = formatReleaseYear(row.track.apple.details?.releaseDate)
-    return {
-      title: width < 64
-        ? `${marker} ${row.track.title} — ${row.track.artist}`
-        : `${marker} ${row.track.title}`,
-      artist: row.track.artist,
-      album: "song",
-      year: year ?? "",
-      time: formatDuration(row.track.durationSeconds),
-    }
-  }
-  if (row.kind === "album") {
-    const year = formatReleaseYear(row.album.apple.details?.releaseDate)
-    const type = row.album.apple.details?.isSingle ? "single / EP" : "album"
-    return {
-      title: width < 64
-        ? `${marker} ${row.album.title} — ${row.album.artist}`
-        : `${marker} ${row.album.title}`,
-      artist: row.album.artist,
-      album: type,
-      year: year ?? "",
-      time: "",
-    }
-  }
-  const genres = row.artist.apple.details?.genreNames?.join(", ") ?? "artist"
-  return {
-    title: `${marker} ${row.artist.name}`,
-    artist: genres,
-    album: "artist",
-    year: "",
-    time: "",
-  }
-}
-
-function appendUniqueBrowseItems(
-  current: readonly ArtistBrowseItem[],
-  additions: readonly ArtistBrowseItem[],
-): readonly ArtistBrowseItem[] {
-  const ids = new Set(current.map((item) => item.id))
-  return [
-    ...current,
-    ...additions.filter((item) => {
-      if (ids.has(item.id)) return false
-      ids.add(item.id)
-      return true
-    }),
-  ]
-}
-
-function browsePageTracks(page: BrowsePage): readonly AppleCatalogTrack[] {
-  return page.kind === "album"
-    ? page.album?.tracks ?? []
-    : page.sections["top-songs"].items.filter(isAppleCatalogTrack)
-}
-
-function isAppleCatalogTrack(item: ArtistBrowseItem | Track): item is AppleCatalogTrack {
-  return (item as Partial<AppleCatalogTrack>).apple?.resourceType === "songs"
-}
-
-function isAppleCatalogAlbumSummary(
-  item: ArtistBrowseItem,
-): item is AppleCatalogAlbumSummary {
-  return (item as Partial<AppleCatalogAlbumSummary>).apple?.resourceType === "albums"
-}
-
-function isAppleCatalogArtist(item: ArtistBrowseItem): item is AppleCatalogArtist {
-  return (item as Partial<AppleCatalogArtist>).apple?.resourceType === "artists"
-}
-
-function browsePageHasError(page: BrowsePage): boolean {
-  return page.kind === "album"
-    ? page.status === "error"
-    : artistSections.some(({ name }) => page.sections[name].status === "error")
-}
-
-function artistPageStatusLine(page: ArtistBrowsePage): string {
-  if (artistSections.some(({ name }) => page.sections[name].status === "loading")) {
-    return "◌  loading artist sections"
-  }
-  if (artistSections.some(({ name }) => page.sections[name].status === "loadingMore")) {
-    return "◌  loading more artist content"
-  }
-  if (browsePageHasError(page)) return "×  some artist sections are unavailable"
-  return page.artist.apple.details?.genreNames?.join(" · ") ?? "Apple Music artist"
-}
-
-function browseAlbumEmptyMessage(
-  status: "loading" | "ready" | "error",
-): string {
-  if (status === "loading") return "Loading album..."
-  if (status === "error") return "Apple Music album is unavailable · esc back"
-  return "This album has no tracks"
-}
-
-function browseFooterHelp(page: BrowsePage, width: number): string {
-  const hasMore = page.kind === "artist" && artistSections.some(
-    ({ name }) => page.sections[name].nextCursor !== null,
-  )
-  if (width < 64) return hasMore
-    ? "enter open  m more  esc back"
-    : "enter open  esc back"
-  return hasMore
-    ? "enter open or play   m load selected section   esc / ctrl+o back"
-    : "enter open or play   esc / ctrl+o back"
-}
-
-function playlistDisplayRows(
-  destination: Destination,
-  playlists: readonly ApplePlaylist[],
-  homeSections: readonly AppleHomeSection[],
-): readonly PlaylistDisplayRow[] {
-  if (destination === "playlists") {
-    return playlists.length > 0
-      ? [
-          { kind: "heading", title: "YOUR LIBRARY" },
-          ...playlists.map(
-            (playlist): PlaylistDisplayRow => ({ kind: "playlist", playlist }),
-          ),
-        ]
-      : []
-  }
-
-  const visibleIds = new Set(playlists.map((playlist) => playlist.id))
-  return homeSections.flatMap((section): readonly PlaylistDisplayRow[] => {
-    const items = section.items.filter((playlist) => visibleIds.has(playlist.id))
-    return items.length > 0
-      ? [
-          { kind: "heading", title: section.title },
-          ...items.map(
-            (playlist): PlaylistDisplayRow => ({ kind: "playlist", playlist }),
-          ),
-        ]
-      : []
-  })
-}
-
-function appendUniqueHomeSections(
-  current: readonly AppleHomeSection[],
-  additions: readonly AppleHomeSection[],
-): readonly AppleHomeSection[] {
-  const sections = current.map((section) => ({ ...section }))
-  const indexes = new Map(sections.map((section, index) => [section.id, index]))
-  const playlistIds = new Set(
-    sections.flatMap((section) => section.items.map((playlist) => playlist.id)),
-  )
-  for (const addition of additions) {
-    const items = addition.items.filter((playlist) => {
-      if (playlistIds.has(playlist.id)) return false
-      playlistIds.add(playlist.id)
-      return true
-    })
-    if (items.length === 0) continue
-    const index = indexes.get(addition.id)
-    if (index === undefined) {
-      indexes.set(addition.id, sections.length)
-      sections.push({ ...addition, items })
-      continue
-    }
-    const section = sections[index]!
-    sections[index] = {
-      ...section,
-      items: [...section.items, ...items],
-    }
-  }
-  return sections
-}
-
-function appendUniquePlaylists<T extends ApplePlaylist>(
-  current: readonly T[],
-  additions: readonly T[],
-): readonly T[] {
-  const ids = new Set(current.map((playlist) => playlist.id))
-  const playlists = [...current]
-  for (const playlist of additions) {
-    if (ids.has(playlist.id)) continue
-    ids.add(playlist.id)
-    playlists.push(playlist)
-  }
-  return playlists
-}
-
-function appendUniqueTracks(
-  current: readonly AppleCatalogTrack[],
-  additions: readonly AppleCatalogTrack[],
-): readonly AppleCatalogTrack[] {
-  const ids = new Set(current.map((track) => track.id))
-  return [...current, ...additions.filter((track) => !ids.has(track.id))]
-}
-
-function filterPlaylistValues(
-  playlists: readonly ApplePlaylist[],
-  query: string,
-): readonly ApplePlaylist[] {
-  const normalized = normalizeFilter(query)
-  if (!normalized) return playlists
-  const terms = normalized.split(/\s+/)
-  return playlists.filter((playlist) => {
-    const text = normalizeFilter(
-      `${playlist.title} ${playlist.curator} ${playlist.description ?? ""}`,
-    )
-    return terms.every((term) => text.includes(term))
-  })
-}
-
-function normalizeFilter(value: string): string {
-  return value
-    .normalize("NFKD")
-    .replace(/\p{Mark}/gu, "")
-    .trim()
-    .toLowerCase()
-}
-
-function playlistLoading(state: { status: string }): boolean {
-  return state.status === "loading"
-}
-
-function playlistLoadingMore(state: { status: string }): boolean {
-  return state.status === "loadingMore"
-}
-
-function playlistLandingUnavailable(
-  state: { status: string },
-  itemCount: number,
-): boolean {
-  return itemCount === 0 && state.status === "error"
-}
-
-function getRowStart(
-  selectedIndex: number,
-  itemCount: number,
-  rowCount: number,
-): number {
-  if (itemCount <= rowCount) return 0
-  return Math.min(
-    Math.max(0, selectedIndex - Math.floor(rowCount / 2)),
-    itemCount - rowCount,
-  )
-}
-
-function getPaletteCommands(
-  query: string,
-  appleAuthStatus: AppleAuthStatus,
-  canAppleAuth: boolean,
-  canOpenAlbum: boolean,
-  canOpenInfo: boolean,
-  canBrowseNowPlaying: boolean,
-  canFilter: boolean,
-  canSetShuffleMode: boolean,
-  canSetRepeatMode: boolean,
-): readonly Command[] {
-  const availableCommands = commands.filter((command) => {
-    if (command.id === "album") return canOpenAlbum
-    if (command.id === "info") return canOpenInfo
-    if (command.id === "browse-now-playing") return canBrowseNowPlaying
-    if (command.id === "filter") return canFilter
-    if (command.id === "shuffle") return canSetShuffleMode
-    if (command.id === "repeat") return canSetRepeatMode
-    if (command.id === "apple-sign-in") {
-      if (!canAppleAuth) return false
-      return (
-        appleAuthStatus.state === "signedOut" ||
-        (appleAuthStatus.state === "error" &&
-          [
-            "authorization_invalid",
-            "browser_open_failed",
-            "service_unavailable",
-            "session_expired",
-          ].includes(appleAuthStatus.code))
-      )
-    }
-    if (command.id === "apple-sign-out") {
-      return (
-        canAppleAuth &&
-        (appleAuthStatus.state === "signedIn" ||
-          (appleAuthStatus.state === "error" &&
-            appleAuthStatus.code === "credential_delete_failed"))
-      )
-    }
-    if (command.id === "apple-retry-restore") {
-      return (
-        canAppleAuth &&
-        appleAuthStatus.state === "error" &&
-        appleAuthStatus.code === "credential_load_failed"
-      )
-    }
-    if (command.id === "apple-cleanup") {
-      return (
-        canAppleAuth &&
-        appleAuthStatus.state === "error" &&
-        appleAuthStatus.code === "credential_save_failed"
-      )
-    }
-    return true
-  })
-  const normalizedQuery = query.trim().toLowerCase()
-  if (!normalizedQuery) return availableCommands
-  return availableCommands.filter((command) =>
-    `${command.title} ${command.description} ${command.keywords}`
-      .toLowerCase()
-      .includes(normalizedQuery),
-  )
-}
-
-function formatInfoTarget(target: InfoTarget): string {
-  if (target.kind === "playlist") return formatPlaylistInfo(target.playlist)
-  if (target.kind === "album") return formatAlbumInfo(target.album)
-
-  const lines = formatTrackInfo(target.track)
-  if (target.album) {
-    lines.push("", "ALBUM", ...formatAlbumInfo(target.album).split("\n"))
-  }
-  if (target.playlist) {
-    lines.push("", "PLAYLIST", ...formatPlaylistInfo(target.playlist).split("\n"))
-  }
-  return lines.join("\n")
-}
-
-function formatTrackInfo(track: Track): string[] {
-  const lines = [safeInfoText(track.title), safeInfoText(track.artist), ""]
-  infoField(lines, "Album", track.album)
-  infoField(lines, "Duration", formatDuration(track.durationSeconds))
-  const apple = (track as Partial<AppleCatalogTrack>).apple
-  if (apple?.resourceType !== "songs") return lines
-
-  const details = apple.details
-  infoField(lines, "Released", formatInfoDate(details?.releaseDate))
-  infoField(lines, "Genres", details?.genreNames?.join(", "))
-  infoField(lines, "Track", details?.trackNumber)
-  infoField(lines, "Disc", details?.discNumber)
-  infoField(lines, "Composer", details?.composerName)
-  infoField(lines, "Rating", titleCase(details?.contentRating))
-  if (details?.hasLyrics !== undefined) {
-    infoField(lines, "Lyrics", details.hasLyrics ? "Available" : "Unavailable")
-  }
-  if (details?.isAppleDigitalMaster !== undefined) {
-    infoField(lines, "Master", details.isAppleDigitalMaster ? "Apple Digital Master" : "Standard")
-  }
-  if (track.audioQuality) {
-    infoField(
-      lines,
-      "Audio",
-      formatAudioQuality(track.audioQuality).replace(/^AUDIO\s+/, ""),
-    )
-  }
-  if (details?.editorialNotes) {
-    lines.push("", "EDITORIAL NOTES", safeInfoText(details.editorialNotes, 2_000))
-  }
-  return lines
-}
-
-function formatAlbumInfo(album: AppleCatalogAlbum): string {
-  const lines = [safeInfoText(album.title), safeInfoText(album.artist), ""]
-  const details = album.apple.details
-  infoField(lines, "Released", formatInfoDate(details?.releaseDate))
-  infoField(lines, "Genres", details?.genreNames?.join(", "))
-  infoField(lines, "Tracks", details?.trackCount ?? album.tracks.length)
-  infoField(lines, "Label", details?.recordLabel)
-  infoField(lines, "Rating", titleCase(details?.contentRating))
-  if (details?.isCompilation !== undefined) {
-    infoField(lines, "Compilation", details.isCompilation ? "Yes" : "No")
-  }
-  if (details?.isSingle !== undefined) {
-    infoField(lines, "Single", details.isSingle ? "Yes" : "No")
-  }
-  infoField(lines, "Copyright", details?.copyright)
-  if (details?.editorialNotes) {
-    lines.push("", "EDITORIAL NOTES", safeInfoText(details.editorialNotes, 2_000))
-  }
-  return lines.join("\n")
-}
-
-function formatPlaylistInfo(playlist: ApplePlaylist): string {
-  const lines = [safeInfoText(playlist.title), safeInfoText(playlist.curator), ""]
-  const library = playlist.apple.resourceType === "library-playlists"
-  const details = playlist.apple.details
-  infoField(lines, "Source", library ? "Your Library" : "For You")
-  infoField(lines, "Type", titleCase(details?.playlistType))
-  infoField(lines, "Updated", formatInfoDate(details?.lastModifiedDate))
-  infoField(lines, "Added", formatInfoDate(details?.dateAdded))
-  if (details?.isChart !== undefined) {
-    infoField(lines, "Chart", details.isChart ? "Yes" : "No")
-  }
-  if (details?.canEdit !== undefined) {
-    infoField(lines, "Editable", details.canEdit ? "Yes" : "No")
-  }
-  if (details?.isPublic !== undefined) {
-    infoField(lines, "Visibility", details.isPublic ? "Public" : "Private")
-  }
-  if (details?.hasCatalog !== undefined) {
-    infoField(lines, "Catalog", details.hasCatalog ? "Matched" : "Library only")
-  }
-  if (playlist.description) {
-    lines.push("", "DESCRIPTION", safeInfoText(playlist.description, 2_000))
-  }
-  return lines.join("\n")
-}
-
-function infoField(
-  lines: string[],
-  label: string,
-  value: string | number | undefined,
-): void {
-  if (value === undefined || value === "") return
-  lines.push(`${label.padEnd(14)}${safeInfoText(String(value), 1_000)}`)
-}
-
-function safeInfoText(value: string, maxLength = 500): string {
-  return value
-    .slice(0, maxLength)
-    .replace(/[\u0000-\u001f\u007f-\u009f]/gu, " ")
-    .replace(/\s+/gu, " ")
-    .trim()
-}
-
-function formatInfoDate(value: string | undefined): string | undefined {
-  if (!value) return undefined
-  const date = value.match(/^\d{4}-\d{2}-\d{2}/u)?.[0]
-  return date ?? value
-}
-
-function formatReleaseYear(value: string | undefined): string | undefined {
-  return value?.match(/^(\d{4})(?:-\d{2}-\d{2})?$/u)?.[1]
-}
-
-function titleCase(value: string | undefined): string | undefined {
-  return value
-    ?.split(/[-_\s]+/u)
-    .filter(Boolean)
-    .map((part) => part[0]!.toUpperCase() + part.slice(1))
-    .join(" ")
-}
-
-function appleAuthStatusLabel(status: AppleAuthStatus): string {
-  switch (status.state) {
-    case "signedOut":
-      return "apple music  ○ signed out"
-    case "restoring":
-      return "apple music  ◌ restoring"
-    case "connecting":
-      return "apple music  ◌ connecting"
-    case "authorizing":
-      return "apple music  ◌ waiting"
-    case "validating":
-      return "apple music  ◌ validating"
-    case "saving":
-      return "apple music  ◌ saving login"
-    case "signedIn":
-      return `apple music  ● ${status.storefront}`
-    case "signingOut":
-      return "apple music  ◌ signing out"
-    case "error":
-      if (status.code === "credential_delete_failed") {
-        return "apple music  × sign out failed"
-      }
-      if (
-        status.code === "credential_load_failed"
-      ) {
-        return "apple music  × keyring"
-      }
-      if (status.code === "credential_save_failed") {
-        return "apple music  × save failed"
-      }
-      return "apple music  × unavailable"
-  }
-}
-
-function compactAppleAuthStatusLabel(status: AppleAuthStatus): string {
-  switch (status.state) {
-    case "signedIn":
-      return `apple ● ${status.storefront}`
-    case "authorizing":
-    case "connecting":
-    case "validating":
-    case "saving":
-    case "restoring":
-    case "signingOut":
-      return "apple ◌ busy"
-    case "signedOut":
-      return "apple ○ out"
-    case "error":
-      if (status.code === "credential_delete_failed") return "apple × sign-out"
-      if (
-        status.code === "credential_load_failed"
-      ) {
-        return "apple × keyring"
-      }
-      if (status.code === "credential_save_failed") return "apple × save"
-      return "apple × error"
-  }
-}
-
-function isAppleAuthProgress(status: AppleAuthStatus): boolean {
-  return (
-    status.state === "connecting" ||
-    status.state === "authorizing" ||
-    status.state === "validating" ||
-    status.state === "saving"
-  )
-}
-
-function appleAuthProgressCopy(status: AppleAuthStatus): readonly string[] {
-  switch (status.state) {
-    case "connecting":
-      return ["Starting a secure browser session...", "", "", "", "", "Please wait."]
-    case "authorizing":
-      return [
-        "Continue in the browser window.",
-        "Approve access with Apple Music.",
-        "No pairing code is required.",
-        "",
-        "Return here after approval.",
-        "Waiting for Apple Music...",
-      ]
-    case "validating":
-      return ["Authorization received.", "Checking it with Apple Music...", "", "", "", "Please wait."]
-    case "saving":
-      return ["Authorization verified.", "Saving it to the system keyring...", "", "", "", "Please wait."]
-    default:
-      return []
-  }
-}
-
-function appleAuthSuccessCopy(status: AppleAuthStatus): readonly string[] {
-  return status.state === "signedIn"
-    ? [
-        "Apple Music authorization succeeded.",
-        `Storefront: ${status.storefront.toUpperCase()}`,
-        "Your login is stored in the system keyring.",
-        "",
-        "The browser tab can now be closed.",
-        "Press Enter to continue.",
-      ]
-    : []
 }
 
 function gotoTarget(key: KeyEvent): Destination | "now-playing" | null {
@@ -3944,207 +3157,4 @@ function isShiftKey(key: KeyEvent, name: string): boolean {
     (key.shift || key.sequence === name.toUpperCase()) &&
     (key.name === name || key.sequence.toLowerCase() === name)
   )
-}
-
-function visualizerSettingRows(
-  settings: VisualizerSettings,
-): readonly { label: string; value: string }[] {
-  const definition = visualizerDefinition(settings.kind)
-  return [
-    { label: "Visualizer", value: definition.label },
-    {
-      label: "Style",
-      value: choiceLabel(definition.styles, settings.style),
-    },
-    {
-      label: "Palette",
-      value: choiceLabel(visualizerPalettes, settings.palette),
-    },
-    {
-      label: "Height",
-      value: choiceLabel(visualizerHeights, settings.height),
-    },
-  ]
-}
-
-function choiceLabel<T extends string | number>(
-  choices: readonly { value: T; label: string }[],
-  value: T,
-): string {
-  return choices.find((choice) => choice.value === value)?.label ?? String(value)
-}
-
-function cycleChoice<T extends string | number>(
-  choices: readonly { value: T; label: string }[],
-  current: T,
-  delta: number,
-): T {
-  const currentIndex = Math.max(0, choices.findIndex((choice) => choice.value === current))
-  const nextIndex = (currentIndex + delta % choices.length + choices.length) % choices.length
-  return choices[nextIndex]!.value
-}
-
-function destinationLabel(destination: Destination): string {
-  return destination[0]!.toUpperCase() + destination.slice(1)
-}
-
-function isPlaylistLanding(
-  destination: Destination,
-): destination is "home" | "playlists" {
-  return destination === "home" || destination === "playlists"
-}
-
-function emptyMessage(destination: Destination, baseTrackCount: number): string {
-  if (destination === "queue" && baseTrackCount === 0) {
-    return "queue is empty"
-  }
-  if (baseTrackCount === 0) {
-    return destination === "search"
-      ? "Apple Music search is not connected"
-      : destination === "home"
-        ? "Apple Music Home is not loaded yet"
-        : destination === "playlists"
-        ? "Apple Music playlists are not loaded yet"
-      : "Apple Music library is not loaded yet"
-  }
-  return "no tracks match this filter"
-}
-
-function searchEmptyMessage(search: {
-  query: string
-  status: "idle" | "loading" | "loadingMore" | "ready" | "error"
-}): string {
-  switch (search.status) {
-    case "idle":
-      return "Type a search and press Enter"
-    case "loading":
-    case "loadingMore":
-      return "Searching Apple Music..."
-    case "error":
-      return "Apple Music search is unavailable"
-    case "ready":
-      return search.query ? `No songs found for ${search.query}` : "No songs found"
-  }
-}
-
-function footerHelp(state: AppState, width = 120): string {
-  if (state.mode.type === "palette") return "type commands   ↑/↓ move   enter run   esc close"
-  if (state.mode.type === "help") return "? or esc close   ctrl+p commands"
-  if (state.mode.type === "search") return "type query   enter search Apple Music   esc cancel"
-  if (state.mode.type === "filter") return "type filter   ↑/↓ move   enter apply   esc cancel"
-  if (state.mode.pendingKey === "g") {
-    return "n now playing   h home   l library   p playlists   s search   q queue"
-  }
-  if (width < 64) return "↑↓ move  enter play  i info  ←→ seek"
-  if (width < 100) return "j/k move  enter play  b/s/n transport  r repeat  space pause"
-  return "j/k move  enter play  b/s/n transport  r repeat  space pause  ←/→ seek  / filter  ctrl+p commands"
-}
-
-function searchFooterHelp(hasMore: boolean, width: number): string {
-  if (width < 64) return hasMore ? "enter play  i info  m more" : "enter play  i info"
-  return hasMore
-    ? "enter play   i info   g s search   a album   m more"
-    : "enter play   i info   g s search   a album"
-}
-
-function albumFooterHelp(width: number): string {
-  return width < 64
-    ? "enter play  i info  esc back"
-    : "enter play   i info   space pause   esc search results   g s search"
-}
-
-function playlistFooterHelp(
-  hasMore: boolean,
-  width: number,
-  destination: Destination,
-): string {
-  if (width < 64) return hasMore ? "enter open  i info  m more" : "enter open  i info"
-  const back = destination === "playlists" ? "   esc home" : ""
-  return hasMore
-    ? `enter open playlist   i info   / filter   m load more${back}`
-    : `enter open playlist   i info   / filter${back}`
-}
-
-function playlistDetailFooterHelp(hasMore: boolean, width: number): string {
-  if (width < 64) return hasMore ? "enter play  i info  m more" : "enter play  i info"
-  return hasMore
-    ? "enter play   i info   space pause   / filter   m more   esc back"
-    : "enter play   i info   space pause   / filter   esc back"
-}
-
-function playlistEmptyMessage(
-  destination: Destination,
-  state: { status: string },
-  loadedCount: number,
-): string {
-  if (state.status === "idle") {
-    return destination === "home"
-      ? "Apple Music Home is not loaded yet"
-      : "Apple Music playlists are not loaded yet"
-  }
-  if (playlistLoading(state)) {
-    return destination === "home"
-      ? "Loading Apple Music Home..."
-      : "Loading Apple Music playlists..."
-  }
-  if (playlistLandingUnavailable(state, loadedCount)) {
-    return destination === "home"
-      ? "Apple Music Home is unavailable"
-      : "Apple Music playlists are unavailable"
-  }
-  if (loadedCount > 0) return "No playlists match this filter"
-  return destination === "home" ? "No recommendations found" : "No playlists found"
-}
-
-function playlistTrackEmptyMessage(
-  status: "loading" | "ready" | "loadingMore" | "error",
-): string {
-  if (status === "loading") return "Loading playlist..."
-  if (status === "error") return "Apple Music playlist is unavailable · esc back"
-  return "This playlist has no playable songs"
-}
-
-function albumEmptyMessage(status: "loading" | "ready" | "error"): string {
-  if (status === "loading") return "Loading album..."
-  if (status === "error") return "Apple Music album is unavailable · esc back"
-  return "This album has no tracks"
-}
-
-function appleSongResourceId(track: Track | undefined): string | null {
-  const apple = (track as Partial<AppleCatalogTrack> | undefined)?.apple
-  return apple?.resourceType === "songs" && typeof apple.resourceId === "string"
-    ? apple.resourceId
-    : null
-}
-
-function isPlayableAppleTrack(track: Track | undefined): track is AppleCatalogTrack {
-  const apple = (track as Partial<AppleCatalogTrack> | undefined)?.apple
-  return Boolean(
-    apple?.resourceType === "songs" &&
-    typeof apple.resourceId === "string" &&
-    apple.playParams?.kind === "song" &&
-    apple.playParams.id === apple.resourceId,
-  )
-}
-
-function playbackErrorMessage(errorCode: string): string {
-  if (errorCode === "authorization_rejected" || errorCode === "authorization_invalid") {
-    return "Apple Music playback authorization is required"
-  }
-  if (errorCode === "worker_crashed" || errorCode === "worker_exited") {
-    return "the playback worker stopped; press Enter to retry"
-  }
-  if (errorCode === "playback_timeout") return "Apple Music playback did not start"
-  if (errorCode === "drm_unavailable") return "Apple Music DRM is unavailable"
-  return "Apple Music could not complete the playback request"
-}
-
-function pluralize(noun: string, count: number): string {
-  return count === 1 ? noun : `${noun}s`
-}
-
-export function formatDuration(durationSeconds: number): string {
-  const minutes = Math.floor(durationSeconds / 60)
-  const seconds = Math.floor(durationSeconds % 60)
-  return `${minutes}:${seconds.toString().padStart(2, "0")}`
 }
