@@ -16,8 +16,8 @@ import {
 } from "../core/state"
 import type {
   AppleCatalogAlbum,
-  AppleCatalogPlaylist,
   AppleCatalogTrack,
+  AppleHomeSection,
   AppleLibraryPlaylist,
   ApplePlaylist,
   PlaybackController,
@@ -37,6 +37,7 @@ const maxPlaybackQueueTracks = 100
 const maxPlaylistShufflePages = 4
 
 type CommandId =
+  | "home"
   | "library"
   | "playlists"
   | "search"
@@ -62,6 +63,13 @@ interface Command {
 
 const commands: readonly Command[] = [
   {
+    id: "home",
+    title: "Go to Home",
+    description: "Browse personalized recommendations",
+    shortcut: "g h",
+    keywords: "home personalized recommendations for you",
+  },
+  {
     id: "library",
     title: "Go to Library",
     description: "Browse saved tracks",
@@ -71,9 +79,9 @@ const commands: readonly Command[] = [
   {
     id: "playlists",
     title: "Go to Playlists",
-    description: "Browse For You and saved playlists",
+    description: "Browse saved playlists",
     shortcut: "g p",
-    keywords: "playlists for you recommended saved library",
+    keywords: "playlists saved library",
   },
   {
     id: "search",
@@ -172,9 +180,9 @@ interface NutkaAppOptions {
     songResourceId: string,
     options?: Pick<SearchOptions, "signal">,
   ) => Promise<AppleCatalogAlbum>
-  onGetRecommendedPlaylists?: (
+  onGetHomeSections?: (
     options?: SearchOptions,
-  ) => Promise<SearchPage<AppleCatalogPlaylist>>
+  ) => Promise<SearchPage<AppleHomeSection>>
   onGetLibraryPlaylists?: (
     options?: SearchOptions,
   ) => Promise<SearchPage<AppleLibraryPlaylist>>
@@ -242,17 +250,17 @@ export function createNutkaApp(
     sourceFilter: string
     album?: AppleCatalogAlbum
   } | undefined
-  let recommendedPlaylists: readonly AppleCatalogPlaylist[] = []
+  let homeSections: readonly AppleHomeSection[] = []
   let libraryPlaylists: readonly AppleLibraryPlaylist[] = []
-  let recommendationRequest: AbortController | undefined
-  let recommendationGeneration = 0
+  let homeRequest: AbortController | undefined
+  let homeGeneration = 0
   let libraryPlaylistRequest: AbortController | undefined
   let libraryPlaylistGeneration = 0
   let playlistTrackRequest: AbortController | undefined
   let playlistTrackGeneration = 0
   let randomPlaylistRequest: AbortController | undefined
   let randomPlaylistGeneration = 0
-  let recommendationState: {
+  let homeState: {
     status: "idle" | "loading" | "loadingMore" | "ready" | "error"
     nextCursor: string | null
   } = { status: "idle", nextCursor: null }
@@ -265,6 +273,7 @@ export function createNutkaApp(
     playlist: ApplePlaylist
     tracks: readonly AppleCatalogTrack[]
     nextCursor: string | null
+    sourceDestination: "home" | "playlists"
     sourceSelectedTrackId: string | null
     sourceFilter: string
   } | undefined
@@ -303,7 +312,7 @@ export function createNutkaApp(
     borderColor: theme.border,
     backgroundColor: theme.surface,
   })
-  const breadcrumb = text(renderer, "breadcrumb", "nutka  /  library", theme.text)
+  const breadcrumb = text(renderer, "breadcrumb", "nutka  /  home", theme.text)
   const providerStatus = text(
     renderer,
     "provider-status",
@@ -329,7 +338,7 @@ export function createNutkaApp(
     flexDirection: "row",
     justifyContent: "space-between",
   })
-  const workspaceTitle = text(renderer, "workspace-title", "Library", theme.text)
+  const workspaceTitle = text(renderer, "workspace-title", "Home", theme.text)
   const workspaceCount = text(renderer, "workspace-count", "", theme.muted)
   workspaceHeader.add(workspaceTitle)
   workspaceHeader.add(workspaceCount)
@@ -378,7 +387,7 @@ export function createNutkaApp(
     "j/k move   / fuzzy filter   ctrl+p commands   ? help",
     theme.muted,
   )
-  const destinationHint = text(renderer, "destination-hint", "g l/p/s/q", theme.amber)
+  const destinationHint = text(renderer, "destination-hint", "g h/l/p/s/q", theme.amber)
   keyHelp.flexGrow = 1
   destinationHint.width = 11
   footer.add(mode)
@@ -470,7 +479,7 @@ export function createNutkaApp(
   })
   const helpLines = [
     ["GLOBAL", theme.accent],
-    ["g l  library     g p  playlists     g s  search     g q  queue", theme.text],
+    ["g h home   g l library   g p playlists   g s search   g q queue", theme.text],
     ["ctrl+p  commands      v    visualizer   ? help   q quit", theme.text],
     ["", theme.text],
     ["LISTS", theme.accent],
@@ -478,7 +487,7 @@ export function createNutkaApp(
     ["b/r/n       previous / random / next track", theme.text],
     ["i           item info /      filter", theme.text],
     ["←/→         seek 5s   shift+←/→  seek 15s", theme.text],
-    ["esc         back to library or cancel pending g", theme.text],
+    ["esc         back to Home or cancel pending g", theme.text],
     ["", theme.text],
     ["FILTER", theme.accent],
     ["type to narrow        ↑/↓  choose        enter  apply", theme.text],
@@ -635,8 +644,8 @@ export function createNutkaApp(
   }
 
   function selectedLandingPlaylist(): ApplePlaylist | undefined {
-    if (state.destination !== "playlists" || playlistView) return undefined
-    const selectedId = state.lists.playlists.selectedTrackId
+    if (!isPlaylistLanding(state.destination) || playlistView) return undefined
+    const selectedId = state.lists[state.destination].selectedTrackId
     return getVisiblePlaylists().find((playlist) => playlist.id === selectedId)
   }
 
@@ -732,7 +741,7 @@ export function createNutkaApp(
     if (destination === "search") {
       return albumView?.status === "ready" ? albumView.album!.tracks : albumView ? [] : searchTracks
     }
-    if (destination === "playlists") {
+    if (destination === "home" || destination === "playlists") {
       return playlistView?.status === "ready" || playlistView?.status === "loadingMore"
         ? playlistView.tracks
         : []
@@ -749,36 +758,29 @@ export function createNutkaApp(
     return filterTracks(getBaseTracks(), query)
   }
 
-  function getPlaylists(): readonly ApplePlaylist[] {
-    const savedCatalogIds = new Set(
-      libraryPlaylists
-        .map((playlist) => playlist.apple.globalId)
-        .filter((id): id is string => Boolean(id)),
-    )
-    return [
-      ...recommendedPlaylists.filter(
-        (playlist) => !savedCatalogIds.has(playlist.apple.resourceId),
-      ),
-      ...libraryPlaylists,
-    ]
+  function getPlaylists(destination = state.destination): readonly ApplePlaylist[] {
+    if (destination === "home") {
+      return homeSections.flatMap((section) => section.items)
+    }
+    return destination === "playlists" ? libraryPlaylists : []
   }
 
   function getVisiblePlaylists(): readonly ApplePlaylist[] {
     const query = state.mode.type === "filter"
       ? state.mode.draft
-      : state.lists.playlists.filter
+      : state.lists[state.destination].filter
     return filterPlaylistValues(getPlaylists(), query)
   }
 
   function getVisibleItemIds(): readonly string[] {
-    return state.destination === "playlists" && !playlistView
+    return isPlaylistLanding(state.destination) && !playlistView
       ? getVisiblePlaylists().map((playlist) => playlist.id)
       : getVisibleTracks().map((track) => track.id)
   }
 
   function selectedInfoTarget(): InfoTarget | undefined {
     const selectedId = state.lists[state.destination].selectedTrackId
-    if (state.destination === "playlists" && !playlistView) {
+    if (isPlaylistLanding(state.destination) && !playlistView) {
       const playlist = getVisiblePlaylists().find((item) => item.id === selectedId)
       return playlist ? { kind: "playlist", playlist } : undefined
     }
@@ -905,57 +907,55 @@ export function createNutkaApp(
     }
   }
 
-  async function loadPlaylistLanding(): Promise<void> {
-    const requests: Promise<void>[] = []
-    if (
-      recommendationState.status === "idle" ||
-      recommendationState.status === "error"
-    ) {
-      requests.push(loadRecommendedPlaylists())
+  async function loadPlaylistLanding(destination = state.destination): Promise<void> {
+    if (destination === "home") {
+      if (homeState.status === "idle" || homeState.status === "error") {
+        await loadHomeSections()
+      }
+      return
     }
     if (
-      libraryPlaylistState.status === "idle" ||
-      libraryPlaylistState.status === "error"
+      destination === "playlists" &&
+      (libraryPlaylistState.status === "idle" || libraryPlaylistState.status === "error")
     ) {
-      requests.push(loadLibraryPlaylists())
+      await loadLibraryPlaylists()
     }
-    await Promise.all(requests)
   }
 
-  async function loadRecommendedPlaylists(cursor?: string): Promise<void> {
-    if (!options.onGetRecommendedPlaylists) {
-      recommendationState = { status: "error", nextCursor: null }
+  async function loadHomeSections(cursor?: string): Promise<void> {
+    if (!options.onGetHomeSections) {
+      homeState = { status: "error", nextCursor: null }
       renderState()
       return
     }
-    const generation = ++recommendationGeneration
-    recommendationRequest?.abort()
+    const generation = ++homeGeneration
+    homeRequest?.abort()
     const controller = new AbortController()
-    recommendationRequest = controller
-    recommendationState = {
-      ...recommendationState,
+    homeRequest = controller
+    homeState = {
+      ...homeState,
       status: cursor ? "loadingMore" : "loading",
     }
-    if (!cursor) recommendedPlaylists = []
+    if (!cursor) homeSections = []
     renderState()
     try {
-      const page = await options.onGetRecommendedPlaylists({
+      const page = await options.onGetHomeSections({
         ...(cursor ? { cursor } : {}),
         signal: controller.signal,
       })
-      if (controller.signal.aborted || generation !== recommendationGeneration) return
-      recommendedPlaylists = appendUniquePlaylists(recommendedPlaylists, page.items)
-      recommendationState = { status: "ready", nextCursor: page.nextCursor }
+      if (controller.signal.aborted || generation !== homeGeneration) return
+      homeSections = appendUniqueHomeSections(homeSections, page.items)
+      homeState = { status: "ready", nextCursor: page.nextCursor }
       reconcilePlaylistSelection()
     } catch {
-      if (controller.signal.aborted || generation !== recommendationGeneration) return
-      recommendationState = {
+      if (controller.signal.aborted || generation !== homeGeneration) return
+      homeState = {
         status: cursor ? "ready" : "error",
         nextCursor: cursor ?? null,
       }
       renderState()
     } finally {
-      if (recommendationRequest === controller) recommendationRequest = undefined
+      if (homeRequest === controller) homeRequest = undefined
     }
   }
 
@@ -997,12 +997,12 @@ export function createNutkaApp(
   }
 
   function reconcilePlaylistSelection(): void {
-    if (state.destination !== "playlists" || playlistView) {
+    if (!isPlaylistLanding(state.destination) || playlistView) {
       renderState()
       return
     }
     const visible = getVisiblePlaylists()
-    const selectedId = state.lists.playlists.selectedTrackId
+    const selectedId = state.lists[state.destination].selectedTrackId
     if (!visible.some((playlist) => playlist.id === selectedId)) {
       state = reduceAppState(state, {
         type: "select-track",
@@ -1013,24 +1013,21 @@ export function createNutkaApp(
   }
 
   async function loadMorePlaylists(): Promise<void> {
-    const selectedId = state.lists.playlists.selectedTrackId
-    const selected = getVisiblePlaylists().find((playlist) => playlist.id === selectedId)
-    if (selected?.apple.resourceType === "library-playlists") {
-      if (libraryPlaylistState.nextCursor) {
-        await loadLibraryPlaylists(libraryPlaylistState.nextCursor)
-      }
+    if (state.destination === "home") {
+      if (homeState.nextCursor) await loadHomeSections(homeState.nextCursor)
       return
     }
-    if (recommendationState.nextCursor) {
-      await loadRecommendedPlaylists(recommendationState.nextCursor)
-    } else if (libraryPlaylistState.nextCursor) {
+    if (state.destination === "playlists" && libraryPlaylistState.nextCursor) {
       await loadLibraryPlaylists(libraryPlaylistState.nextCursor)
     }
   }
 
   async function openSelectedPlaylist(): Promise<void> {
-    if (playlistView || !options.onGetPlaylistTracks) return
-    const selectedId = state.lists.playlists.selectedTrackId
+    if (!isPlaylistLanding(state.destination) || playlistView || !options.onGetPlaylistTracks) {
+      return
+    }
+    const sourceDestination = state.destination
+    const selectedId = state.lists[sourceDestination].selectedTrackId
     const playlist = getVisiblePlaylists().find((item) => item.id === selectedId)
     if (!playlist) return
 
@@ -1043,13 +1040,14 @@ export function createNutkaApp(
       playlist,
       tracks: [],
       nextCursor: null,
+      sourceDestination,
       sourceSelectedTrackId: selectedId,
-      sourceFilter: state.lists.playlists.filter,
+      sourceFilter: state.lists[sourceDestination].filter,
     }
     state = reduceAppState(state, { type: "close-mode" })
     state = reduceAppState(state, {
       type: "reset-list",
-      destination: "playlists",
+      destination: sourceDestination,
       selectedTrackId: null,
     })
     renderState()
@@ -1069,7 +1067,7 @@ export function createNutkaApp(
       }
       state = reduceAppState(state, {
         type: "reset-list",
-        destination: "playlists",
+        destination: sourceDestination,
         selectedTrackId: page.items[0]?.id ?? null,
       })
       renderState()
@@ -1142,7 +1140,7 @@ export function createNutkaApp(
       mode: { type: "normal", pendingKey: null },
       lists: {
         ...state.lists,
-        playlists: {
+        [view.sourceDestination]: {
           filter: view.sourceFilter,
           selectedTrackId: view.sourceSelectedTrackId,
         },
@@ -1153,8 +1151,8 @@ export function createNutkaApp(
   function navigateTo(destination: Destination): void {
     leaveAlbumView()
     leavePlaylistView()
-    const baseItems = destination === "playlists"
-      ? getPlaylists()
+    const baseItems = isPlaylistLanding(destination)
+      ? getPlaylists(destination)
       : getBaseTracks(destination)
     const rememberedId = state.lists[destination].selectedTrackId
     const selectedTrackId = baseItems.some((item) => item.id === rememberedId)
@@ -1168,8 +1166,8 @@ export function createNutkaApp(
       actions.push({ type: "open-search", query: catalogSearch.query })
     }
     dispatchAll(actions)
-    if (destination === "playlists" && appleAuthStatus.state === "signedIn") {
-      void loadPlaylistLanding()
+    if (isPlaylistLanding(destination) && appleAuthStatus.state === "signedIn") {
+      void loadPlaylistLanding(destination)
     }
   }
 
@@ -1274,9 +1272,12 @@ export function createNutkaApp(
   function renderState(): void {
     const baseTracks = getBaseTracks()
     const visibleTracks = getVisibleTracks()
-    const playlistLanding = state.destination === "playlists" && !playlistView
+    const playlistLanding = isPlaylistLanding(state.destination) && !playlistView
     const visiblePlaylists = playlistLanding ? getVisiblePlaylists() : []
-    const playlistRows = playlistLanding ? playlistDisplayRows(visiblePlaylists) : []
+    const playlistRows = playlistLanding
+      ? playlistDisplayRows(state.destination, visiblePlaylists, homeSections)
+      : []
+    const landingState = state.destination === "home" ? homeState : libraryPlaylistState
     const selectedId = state.lists[state.destination].selectedTrackId
     const selectedIndex = playlistLanding
       ? playlistRows.findIndex(
@@ -1289,6 +1290,7 @@ export function createNutkaApp(
         : state.lists[state.destination].filter
     const showFilter =
       state.destination === "search" ||
+      state.destination === "home" ||
       state.destination === "playlists" ||
       state.mode.type === "search" ||
       Boolean(activeFilter)
@@ -1297,11 +1299,11 @@ export function createNutkaApp(
     const destinationName = destinationLabel(state.destination)
     const activeAlbumView = state.destination === "search" ? albumView : undefined
     const showingAlbum = activeAlbumView !== undefined
-    const activePlaylistView = state.destination === "playlists" ? playlistView : undefined
+    const activePlaylistView = isPlaylistLanding(state.destination) ? playlistView : undefined
     const showingPlaylist = activePlaylistView !== undefined
 
     breadcrumb.content = showingPlaylist
-      ? "nutka  /  playlists  /  playlist"
+      ? `nutka  /  ${activePlaylistView.sourceDestination}  /  playlist`
       : showingAlbum
       ? "nutka  /  search  /  album"
       : `nutka  /  ${destinationName.toLowerCase()}`
@@ -1345,18 +1347,18 @@ export function createNutkaApp(
             ? "×  playlist unavailable · esc back"
             : activePlaylistView
               ? `${activePlaylistView.playlist.curator}${activeFilter ? `  ·  / ${activeFilter}` : ""}`
-        : playlistLanding && playlistsLoading(recommendationState, libraryPlaylistState)
-          ? "◌  loading For You and library playlists"
-          : playlistLanding && playlistsLoadingMore(recommendationState, libraryPlaylistState)
+        : playlistLanding && playlistLoading(landingState)
+          ? state.destination === "home"
+            ? "◌  loading personalized recommendations"
+            : "◌  loading library playlists"
+          : playlistLanding && playlistLoadingMore(landingState)
             ? "◌  loading more playlists"
-          : playlistLanding && playlistsUnavailable(
-              recommendationState,
-              libraryPlaylistState,
-              visiblePlaylists.length,
-            )
+          : playlistLanding && playlistLandingUnavailable(landingState, visiblePlaylists.length)
             ? "×  playlists unavailable"
           : playlistLanding
-            ? `For You  ·  Your Library${activeFilter ? `  ·  / ${activeFilter}` : ""}`
+            ? `${state.destination === "home" ? "Personalized for you" : "Your Library"}${
+              activeFilter ? `  ·  / ${activeFilter}` : ""
+            }`
         : activeAlbumView?.status === "loading"
           ? `◌  loading “${activeAlbumView.title}”`
           : activeAlbumView?.status === "error"
@@ -1379,9 +1381,8 @@ export function createNutkaApp(
         ? theme.text
         : albumView?.status === "error" ||
             playlistView?.status === "error" ||
-            (playlistLanding && playlistsUnavailable(
-              recommendationState,
-              libraryPlaylistState,
+            (playlistLanding && playlistLandingUnavailable(
+              landingState,
               visiblePlaylists.length,
             )) ||
             catalogSearch.status === "error"
@@ -1453,8 +1454,8 @@ export function createNutkaApp(
           title: showEmpty
             ? playlistLanding
                 ? playlistEmptyMessage(
-                  recommendationState,
-                  libraryPlaylistState,
+                  state.destination,
+                  landingState,
                   getPlaylists().length,
                 )
             : activePlaylistView
@@ -1561,7 +1562,7 @@ export function createNutkaApp(
     helpOverlay.visible = state.mode.type === "help"
     const compactHelp = renderer.terminalHeight < 18
     const compactHelpLines = [
-      "ctrl+p commands · g l/p/s/q go",
+      "ctrl+p commands · g h/l/p/s/q go",
       "↑/↓ move · i info · / fuzzy filter",
       "b/r/n previous · random · next",
       "←/→ seek 5s · shift+←/→ 15s",
@@ -1633,9 +1634,9 @@ export function createNutkaApp(
             )
         : playlistLanding && state.mode.type === "normal"
           ? playlistFooterHelp(
-              recommendationState.nextCursor !== null ||
-                libraryPlaylistState.nextCursor !== null,
+              landingState.nextCursor !== null,
               renderer.terminalWidth,
+              state.destination,
             )
         : showingAlbum && state.mode.type === "normal"
           ? albumFooterHelp(renderer.terminalWidth)
@@ -1647,6 +1648,7 @@ export function createNutkaApp(
   function executeCommand(command: Command | undefined): void {
     if (!command) return
     switch (command.id) {
+      case "home":
       case "library":
       case "playlists":
       case "search":
@@ -1693,7 +1695,7 @@ export function createNutkaApp(
   }
 
   function editFilter(draft: string): void {
-    const visibleTrackIds = state.destination === "playlists" && !playlistView
+    const visibleTrackIds = isPlaylistLanding(state.destination) && !playlistView
       ? filterPlaylistValues(getPlaylists(), draft).map((playlist) => playlist.id)
       : filterTracks(getBaseTracks(), draft).map((track) => track.id)
     dispatch({ type: "edit-filter", draft, visibleTrackIds })
@@ -1868,7 +1870,7 @@ export function createNutkaApp(
       return
     }
     if (key.name === "return" || key.name === "enter") {
-      if (state.destination === "playlists" && !playlistView) {
+      if (isPlaylistLanding(state.destination) && !playlistView) {
         void openSelectedPlaylist()
         return
       }
@@ -1935,7 +1937,7 @@ export function createNutkaApp(
       void loadMoreCatalogSearch()
       return
     }
-    if (state.destination === "playlists" && isPlainKey(key, "m")) {
+    if (isPlaylistLanding(state.destination) && isPlainKey(key, "m")) {
       if (playlistView) void loadMorePlaylistTracks()
       else void loadMorePlaylists()
       return
@@ -1959,7 +1961,7 @@ export function createNutkaApp(
         renderState()
         return
       }
-      if (state.destination !== "library") navigateTo("library")
+      if (state.destination !== "home") navigateTo("home")
       return
     }
     if (isPlainKey(key, "q")) options.onQuit()
@@ -2077,7 +2079,7 @@ export function createNutkaApp(
   return {
     getState: () => ({ ...state }),
     setAppleAuthStatus: (status) => {
-      const shouldLoadPlaylists =
+      const shouldLoadHome =
         status.state === "signedIn" &&
         (appleAuthStatus.state !== "signedIn" ||
           status.storefront !== appleAuthStatus.storefront)
@@ -2095,9 +2097,9 @@ export function createNutkaApp(
         searchRequest = undefined
         searchTracks = []
         catalogSearch = { query: "", status: "idle", nextCursor: null }
-        recommendationGeneration++
-        recommendationRequest?.abort()
-        recommendationRequest = undefined
+        homeGeneration++
+        homeRequest?.abort()
+        homeRequest = undefined
         libraryPlaylistGeneration++
         libraryPlaylistRequest?.abort()
         libraryPlaylistRequest = undefined
@@ -2107,9 +2109,9 @@ export function createNutkaApp(
         randomPlaylistGeneration++
         randomPlaylistRequest?.abort()
         randomPlaylistRequest = undefined
-        recommendedPlaylists = []
+        homeSections = []
         libraryPlaylists = []
-        recommendationState = { status: "idle", nextCursor: null }
+        homeState = { status: "idle", nextCursor: null }
         libraryPlaylistState = { status: "idle", nextCursor: null }
         void options.playback?.disconnect()
         for (const trackId of trackRegistry.keys()) {
@@ -2120,6 +2122,11 @@ export function createNutkaApp(
             trackRegistry.delete(trackId)
           }
         }
+        state = reduceAppState(state, {
+          type: "reset-list",
+          destination: "home",
+          selectedTrackId: null,
+        })
         state = reduceAppState(state, {
           type: "reset-list",
           destination: "search",
@@ -2142,15 +2149,18 @@ export function createNutkaApp(
         })
       }
       renderState()
-      if (shouldLoadPlaylists) void loadPlaylistLanding()
+      if (shouldLoadHome) {
+        void loadPlaylistLanding("home")
+        if (state.destination === "playlists") void loadPlaylistLanding("playlists")
+      }
     },
     destroy: () => {
       searchGeneration++
       searchRequest?.abort()
       albumGeneration++
       albumRequest?.abort()
-      recommendationGeneration++
-      recommendationRequest?.abort()
+      homeGeneration++
+      homeRequest?.abort()
       libraryPlaylistGeneration++
       libraryPlaylistRequest?.abort()
       playlistTrackGeneration++
@@ -2250,26 +2260,64 @@ function setTrackRowColor(row: TrackRow, color: string): void {
 }
 
 function playlistDisplayRows(
+  destination: Destination,
   playlists: readonly ApplePlaylist[],
+  homeSections: readonly AppleHomeSection[],
 ): readonly PlaylistDisplayRow[] {
-  const recommended = playlists.filter(
-    (playlist) => playlist.apple.resourceType === "playlists",
+  if (destination === "playlists") {
+    return playlists.length > 0
+      ? [
+          { kind: "heading", title: "YOUR LIBRARY" },
+          ...playlists.map(
+            (playlist): PlaylistDisplayRow => ({ kind: "playlist", playlist }),
+          ),
+        ]
+      : []
+  }
+
+  const visibleIds = new Set(playlists.map((playlist) => playlist.id))
+  return homeSections.flatMap((section): readonly PlaylistDisplayRow[] => {
+    const items = section.items.filter((playlist) => visibleIds.has(playlist.id))
+    return items.length > 0
+      ? [
+          { kind: "heading", title: section.title },
+          ...items.map(
+            (playlist): PlaylistDisplayRow => ({ kind: "playlist", playlist }),
+          ),
+        ]
+      : []
+  })
+}
+
+function appendUniqueHomeSections(
+  current: readonly AppleHomeSection[],
+  additions: readonly AppleHomeSection[],
+): readonly AppleHomeSection[] {
+  const sections = current.map((section) => ({ ...section }))
+  const indexes = new Map(sections.map((section, index) => [section.id, index]))
+  const playlistIds = new Set(
+    sections.flatMap((section) => section.items.map((playlist) => playlist.id)),
   )
-  const library = playlists.filter(
-    (playlist) => playlist.apple.resourceType === "library-playlists",
-  )
-  return [
-    ...(recommended.length > 0
-      ? [{ kind: "heading" as const, title: "FOR YOU" }, ...recommended.map(
-          (playlist): PlaylistDisplayRow => ({ kind: "playlist", playlist }),
-        )]
-      : []),
-    ...(library.length > 0
-      ? [{ kind: "heading" as const, title: "YOUR LIBRARY" }, ...library.map(
-          (playlist): PlaylistDisplayRow => ({ kind: "playlist", playlist }),
-        )]
-      : []),
-  ]
+  for (const addition of additions) {
+    const items = addition.items.filter((playlist) => {
+      if (playlistIds.has(playlist.id)) return false
+      playlistIds.add(playlist.id)
+      return true
+    })
+    if (items.length === 0) continue
+    const index = indexes.get(addition.id)
+    if (index === undefined) {
+      indexes.set(addition.id, sections.length)
+      sections.push({ ...addition, items })
+      continue
+    }
+    const section = sections[index]!
+    sections[index] = {
+      ...section,
+      items: [...section.items, ...items],
+    }
+  }
+  return sections
 }
 
 function appendUniquePlaylists<T extends ApplePlaylist>(
@@ -2277,7 +2325,13 @@ function appendUniquePlaylists<T extends ApplePlaylist>(
   additions: readonly T[],
 ): readonly T[] {
   const ids = new Set(current.map((playlist) => playlist.id))
-  return [...current, ...additions.filter((playlist) => !ids.has(playlist.id))]
+  const playlists = [...current]
+  for (const playlist of additions) {
+    if (ids.has(playlist.id)) continue
+    ids.add(playlist.id)
+    playlists.push(playlist)
+  }
+  return playlists
 }
 
 function appendUniqueTracks(
@@ -2311,26 +2365,19 @@ function normalizeFilter(value: string): string {
     .toLowerCase()
 }
 
-function playlistsLoading(
-  recommended: { status: string },
-  library: { status: string },
-): boolean {
-  return recommended.status === "loading" || library.status === "loading"
+function playlistLoading(state: { status: string }): boolean {
+  return state.status === "loading"
 }
 
-function playlistsLoadingMore(
-  recommended: { status: string },
-  library: { status: string },
-): boolean {
-  return recommended.status === "loadingMore" || library.status === "loadingMore"
+function playlistLoadingMore(state: { status: string }): boolean {
+  return state.status === "loadingMore"
 }
 
-function playlistsUnavailable(
-  recommended: { status: string },
-  library: { status: string },
+function playlistLandingUnavailable(
+  state: { status: string },
   itemCount: number,
 ): boolean {
-  return itemCount === 0 && recommended.status === "error" && library.status === "error"
+  return itemCount === 0 && state.status === "error"
 }
 
 function getRowStart(
@@ -2630,6 +2677,7 @@ function appleAuthSuccessCopy(status: AppleAuthStatus): readonly string[] {
 }
 
 function gotoDestination(key: KeyEvent): Destination | null {
+  if (isPlainKey(key, "h")) return "home"
   if (isPlainKey(key, "l")) return "library"
   if (isPlainKey(key, "p")) return "playlists"
   if (isPlainKey(key, "s")) return "search"
@@ -2659,6 +2707,12 @@ function destinationLabel(destination: Destination): string {
   return destination[0]!.toUpperCase() + destination.slice(1)
 }
 
+function isPlaylistLanding(
+  destination: Destination,
+): destination is "home" | "playlists" {
+  return destination === "home" || destination === "playlists"
+}
+
 function emptyMessage(destination: Destination, baseTrackCount: number): string {
   if (destination === "queue" && baseTrackCount === 0) {
     return "queue is empty"
@@ -2666,7 +2720,9 @@ function emptyMessage(destination: Destination, baseTrackCount: number): string 
   if (baseTrackCount === 0) {
     return destination === "search"
       ? "Apple Music search is not connected"
-      : destination === "playlists"
+      : destination === "home"
+        ? "Apple Music Home is not loaded yet"
+        : destination === "playlists"
         ? "Apple Music playlists are not loaded yet"
       : "Apple Music library is not loaded yet"
   }
@@ -2696,7 +2752,7 @@ function footerHelp(state: AppState, width = 120): string {
   if (state.mode.type === "search") return "type query   enter search Apple Music   esc cancel"
   if (state.mode.type === "filter") return "type filter   ↑/↓ move   enter apply   esc cancel"
   if (state.mode.pendingKey === "g") {
-    return "l library   p playlists   s search   q queue   esc cancel"
+    return "h home   l library   p playlists   s search   q queue   esc cancel"
   }
   if (width < 64) return "↑↓ move  enter play  i info  ←→ seek"
   if (width < 100) return "j/k move  enter play  b/r/n controls  space pause"
@@ -2716,30 +2772,47 @@ function albumFooterHelp(width: number): string {
     : "enter play   i info   space pause   esc search results   s search"
 }
 
-function playlistFooterHelp(hasMore: boolean, width: number): string {
+function playlistFooterHelp(
+  hasMore: boolean,
+  width: number,
+  destination: Destination,
+): string {
   if (width < 64) return hasMore ? "enter open  i info  m more" : "enter open  i info"
+  const back = destination === "playlists" ? "   esc home" : ""
   return hasMore
-    ? "enter open playlist   i info   / filter   m load more   esc library"
-    : "enter open playlist   i info   / filter   esc library"
+    ? `enter open playlist   i info   / filter   m load more${back}`
+    : `enter open playlist   i info   / filter${back}`
 }
 
 function playlistDetailFooterHelp(hasMore: boolean, width: number): string {
   if (width < 64) return hasMore ? "enter play  i info  m more" : "enter play  i info"
   return hasMore
-    ? "enter play   i info   space pause   / filter   m more   esc playlists"
-    : "enter play   i info   space pause   / filter   esc playlists"
+    ? "enter play   i info   space pause   / filter   m more   esc back"
+    : "enter play   i info   space pause   / filter   esc back"
 }
 
 function playlistEmptyMessage(
-  recommended: { status: string },
-  library: { status: string },
+  destination: Destination,
+  state: { status: string },
   loadedCount: number,
 ): string {
-  if (playlistsLoading(recommended, library)) return "Loading Apple Music playlists..."
-  if (playlistsUnavailable(recommended, library, loadedCount)) {
-    return "Apple Music playlists are unavailable"
+  if (state.status === "idle") {
+    return destination === "home"
+      ? "Apple Music Home is not loaded yet"
+      : "Apple Music playlists are not loaded yet"
   }
-  return loadedCount > 0 ? "No playlists match this filter" : "No playlists found"
+  if (playlistLoading(state)) {
+    return destination === "home"
+      ? "Loading Apple Music Home..."
+      : "Loading Apple Music playlists..."
+  }
+  if (playlistLandingUnavailable(state, loadedCount)) {
+    return destination === "home"
+      ? "Apple Music Home is unavailable"
+      : "Apple Music playlists are unavailable"
+  }
+  if (loadedCount > 0) return "No playlists match this filter"
+  return destination === "home" ? "No recommendations found" : "No playlists found"
 }
 
 function playlistTrackEmptyMessage(

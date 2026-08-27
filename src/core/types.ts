@@ -115,6 +115,12 @@ export interface AppleCatalogPlaylist extends ApplePlaylistBase {
   }
 }
 
+export interface AppleHomeSection {
+  id: string
+  title: string
+  items: readonly AppleCatalogPlaylist[]
+}
+
 export interface AppleLibraryPlaylist extends ApplePlaylistBase {
   apple: {
     resourceId: string

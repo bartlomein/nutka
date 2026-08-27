@@ -5,6 +5,7 @@ import type {
   AppleCatalogTrack,
   AppleAudioTrait,
   AppleContentRating,
+  AppleHomeSection,
   AppleLibraryPlaylist,
   ApplePlaylist,
   ApplePlaylistDetails,
@@ -211,12 +212,22 @@ export class AppleCatalogProvider implements MusicProvider<AppleCatalogTrack> {
   async getRecommendedPlaylists(
     options: SearchOptions = {},
   ): Promise<SearchPage<AppleCatalogPlaylist>> {
+    const page = await this.getHomeSections(options)
+    return {
+      items: page.items.flatMap((section) => section.items),
+      nextCursor: page.nextCursor,
+    }
+  }
+
+  async getHomeSections(
+    options: SearchOptions = {},
+  ): Promise<SearchPage<AppleHomeSection>> {
     const path = "/v1/me/recommendations"
     const url = options.cursor
       ? this.validateCursor(options.cursor, path)
       : collectionUrl(path, this.limit)
     return this.requestPage(url, path, options, true, (value, nextCursor) => ({
-      items: decodeRecommendedPlaylists(value),
+      items: decodeHomeSections(value),
       nextCursor,
     }))
   }
@@ -422,9 +433,9 @@ function requireCollection(
   return root as Record<string, unknown> & { data: unknown[] }
 }
 
-function decodeRecommendedPlaylists(value: unknown): AppleCatalogPlaylist[] {
+function decodeHomeSections(value: unknown): AppleHomeSection[] {
   const root = requireCollection(value)
-  const playlists: AppleCatalogPlaylist[] = []
+  const sections: AppleHomeSection[] = []
   const knownIds = new Set<string>()
   for (const entry of root.data) {
     const recommendation = asRecord(entry)
@@ -443,6 +454,7 @@ function decodeRecommendedPlaylists(value: unknown): AppleCatalogPlaylist[] {
     ) {
       throw new AppleCatalogError("invalid_response")
     }
+    const items: AppleCatalogPlaylist[] = []
     for (const content of contents.data) {
       const resource = asRecord(content)
       if (resource?.type !== "playlists") continue
@@ -450,11 +462,18 @@ function decodeRecommendedPlaylists(value: unknown): AppleCatalogPlaylist[] {
       if (!playlist) throw new AppleCatalogError("invalid_response")
       if (!knownIds.has(playlist.apple.resourceId)) {
         knownIds.add(playlist.apple.resourceId)
-        playlists.push(playlist)
+        items.push(playlist)
       }
     }
+    if (items.length > 0) {
+      sections.push({
+        id: recommendation.id,
+        title: title.stringForDisplay,
+        items,
+      })
+    }
   }
-  return playlists
+  return sections
 }
 
 function decodeCatalogPlaylist(value: unknown): AppleCatalogPlaylist | null {

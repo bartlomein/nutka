@@ -1,6 +1,6 @@
 import type { PlaybackStatus, Track } from "./types"
 
-export type Destination = "library" | "playlists" | "search" | "queue"
+export type Destination = "home" | "library" | "playlists" | "search" | "queue"
 
 export interface ListState {
   selectedTrackId: string | null
@@ -76,9 +76,10 @@ export type AppAction =
 
 export function createInitialState(trackIds: readonly string[]): AppState {
   return {
-    destination: "library",
+    destination: "home",
     mode: { type: "normal", pendingKey: null },
     lists: {
+      home: { selectedTrackId: null, filter: "" },
       library: { selectedTrackId: trackIds[0] ?? null, filter: "" },
       playlists: { selectedTrackId: null, filter: "" },
       search: { selectedTrackId: null, filter: "" },

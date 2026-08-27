@@ -127,6 +127,23 @@ function recommendationsResponse(next?: string): Response {
   })
 }
 
+function playlistResource(id: string, name: string) {
+  return {
+    id,
+    type: "playlists",
+    attributes: { name, curatorName: "Apple Music" },
+  }
+}
+
+function recommendationResource(id: string, title: string, contents: unknown[]) {
+  return {
+    id,
+    type: "personal-recommendation",
+    attributes: { title: { stringForDisplay: title } },
+    relationships: { contents: { data: contents } },
+  }
+}
+
 function libraryPlaylistsResponse(next?: string): Response {
   return Response.json({
     data: [{
@@ -388,6 +405,142 @@ describe("AppleCatalogProvider", () => {
     expect(requests.map(({ url }) => url).join(" ")).not.toContain("user-secret")
   })
 
+  test("preserves Apple home section titles and order while omitting unsupported empty groups", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = []
+    const response = Response.json({
+      data: [
+        recommendationResource("recommendation-first", "Made for You", [
+          playlistResource("pl.first", "First Mix"),
+          { id: "album-1", type: "albums", attributes: { name: "An Album" } },
+        ]),
+        recommendationResource("recommendation-albums", "Albums for You", [
+          { id: "album-2", type: "albums", attributes: { name: "Another Album" } },
+        ]),
+        recommendationResource("recommendation-empty", "Nothing Here", []),
+        recommendationResource("recommendation-last", "Because You Listened", [
+          playlistResource("pl.last", "Last Mix"),
+        ]),
+      ],
+    })
+    const provider = new AppleCatalogProvider(serviceUrl, "us", {
+      fetch: withCatalog(response, requests),
+      useMusicUserToken: async (use) => use("user-secret"),
+    })
+
+    const page = await provider.getHomeSections()
+
+    expect(requests[1]?.url).toBe(
+      "https://api.music.apple.com/v1/me/recommendations?limit=25",
+    )
+    const headers = new Headers(requests[1]?.init?.headers)
+    expect(headers.get("authorization")).toBe("Bearer developer-secret")
+    expect(headers.get("music-user-token")).toBe("user-secret")
+    expect(page).toEqual({
+      items: [
+        {
+          id: "recommendation-first",
+          title: "Made for You",
+          items: [{
+            id: "apple:playlist:pl.first",
+            title: "First Mix",
+            curator: "Apple Music",
+            apple: { resourceId: "pl.first", resourceType: "playlists" },
+          }],
+        },
+        {
+          id: "recommendation-last",
+          title: "Because You Listened",
+          items: [{
+            id: "apple:playlist:pl.last",
+            title: "Last Mix",
+            curator: "Apple Music",
+            apple: { resourceId: "pl.last", resourceType: "playlists" },
+          }],
+        },
+      ],
+      nextCursor: null,
+    })
+  })
+
+  test("deduplicates home playlists globally and keeps the flattened compatibility result", async () => {
+    const payload = {
+      data: [
+        recommendationResource("recommendation-first", "First", [
+          playlistResource("pl.shared", "Shared Mix"),
+          playlistResource("pl.first", "First Mix"),
+        ]),
+        recommendationResource("recommendation-second", "Second", [
+          playlistResource("pl.shared", "Duplicate Shared Mix"),
+          playlistResource("pl.second", "Second Mix"),
+          playlistResource("pl.second", "Duplicate Second Mix"),
+        ]),
+        recommendationResource("recommendation-duplicates", "Duplicates", [
+          playlistResource("pl.first", "Duplicate First Mix"),
+        ]),
+      ],
+    }
+    const fetchImpl: Fetch = async (input) => String(input).endsWith("/developer-token")
+      ? Response.json(tokenResponse)
+      : Response.json(payload)
+    const provider = new AppleCatalogProvider(serviceUrl, "us", {
+      fetch: fetchImpl,
+      useMusicUserToken: async (use) => use("user-secret"),
+    })
+
+    const sections = await provider.getHomeSections()
+    const flattened = await provider.getRecommendedPlaylists()
+
+    expect(sections.items.map((section) => ({
+      id: section.id,
+      title: section.title,
+      playlistIds: section.items.map((playlist) => playlist.apple.resourceId),
+    }))).toEqual([
+      {
+        id: "recommendation-first",
+        title: "First",
+        playlistIds: ["pl.shared", "pl.first"],
+      },
+      {
+        id: "recommendation-second",
+        title: "Second",
+        playlistIds: ["pl.second"],
+      },
+    ])
+    expect(flattened.items.map((playlist) => playlist.apple.resourceId)).toEqual([
+      "pl.shared",
+      "pl.first",
+      "pl.second",
+    ])
+    expect(flattened.nextCursor).toBe(sections.nextCursor)
+  })
+
+  test("uses recommendation cursors unchanged for home section pagination", async () => {
+    const next = "/v1/me/recommendations?offset=25"
+    const requests: Array<{ url: string; init?: RequestInit }> = []
+    let recommendationCalls = 0
+    const fetchImpl: Fetch = async (input, init) => {
+      const url = String(input)
+      requests.push({ url, init })
+      if (url.endsWith("/developer-token")) return Response.json(tokenResponse)
+      recommendationCalls++
+      return recommendationsResponse(recommendationCalls === 1 ? next : undefined)
+    }
+    const provider = new AppleCatalogProvider(serviceUrl, "us", {
+      fetch: fetchImpl,
+      useMusicUserToken: async (use) => use("user-secret"),
+    })
+
+    const first = await provider.getHomeSections()
+    const second = await provider.getHomeSections({ cursor: first.nextCursor! })
+
+    expect(first.nextCursor).toBe(next)
+    expect(second.nextCursor).toBeNull()
+    expect(requests[3]?.url).toBe(`https://api.music.apple.com${next}`)
+    expect(new Headers(requests[3]?.init?.headers).get("music-user-token")).toBe(
+      "user-secret",
+    )
+  })
+
   test("loads catalog and library playlist tracks without broadening playback IDs", async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = []
     const fetchImpl: Fetch = async (input, init) => {
@@ -448,35 +601,51 @@ describe("AppleCatalogProvider", () => {
     await expect(provider.getLibraryPlaylists({
       cursor: "/v1/me/recommendations?offset=25",
     })).rejects.toMatchObject({ code: "invalid_request" })
+    await expect(provider.getHomeSections({
+      cursor: "/v1/me/library/playlists?offset=25",
+    })).rejects.toMatchObject({ code: "invalid_request" })
     await expect(provider.getRecommendedPlaylists({
       cursor: "https://evil.test/v1/me/recommendations?offset=25",
     })).rejects.toMatchObject({ code: "invalid_request" })
-  })
 
-  test("rejects malformed recommendation playlist resources", async () => {
-    const provider = new AppleCatalogProvider(serviceUrl, "us", {
-      fetch: withCatalog(Response.json({
-        data: [{
-          id: "recommended-1",
-          type: "personal-recommendation",
-          attributes: { title: { stringForDisplay: "For You" } },
-          relationships: {
-            contents: {
-              data: [{
-                id: "pl.malformed",
-                type: "playlists",
-                attributes: { curatorName: "Apple Music" },
-              }],
-            },
-          },
-        }],
-      })),
+    const unsafeNext = new AppleCatalogProvider(serviceUrl, "us", {
+      fetch: withCatalog(recommendationsResponse(
+        "https://evil.test/v1/me/recommendations?offset=25",
+      )),
       useMusicUserToken: async (use) => use("user-secret"),
     })
-
-    await expect(provider.getRecommendedPlaylists()).rejects.toMatchObject({
+    await expect(unsafeNext.getHomeSections()).rejects.toMatchObject({
       code: "invalid_response",
     })
+  })
+
+  test("rejects malformed home recommendation groups and playlist resources", async () => {
+    const malformed = [
+      { data: [{ id: "recommended-1", type: "personal-recommendation" }] },
+      {
+        data: [{
+          ...recommendationResource("recommended-1", "For You", []),
+          relationships: { contents: { data: "wrong" } },
+        }],
+      },
+      {
+        data: [recommendationResource("recommended-1", "For You", [{
+          id: "pl.malformed",
+          type: "playlists",
+          attributes: { curatorName: "Apple Music" },
+        }])],
+      },
+    ]
+
+    for (const payload of malformed) {
+      const provider = new AppleCatalogProvider(serviceUrl, "us", {
+        fetch: withCatalog(Response.json(payload)),
+        useMusicUserToken: async (use) => use("user-secret"),
+      })
+      await expect(provider.getHomeSections()).rejects.toMatchObject({
+        code: "invalid_response",
+      })
+    }
   })
 
   test("rejects mock developer-token mode without calling Apple", async () => {

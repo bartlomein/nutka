@@ -6,6 +6,7 @@ import type {
   AppleCatalogAlbum,
   AppleCatalogPlaylist,
   AppleCatalogTrack,
+  AppleHomeSection,
   AppleLibraryPlaylist,
   ApplePlaylist,
   PlaybackController,
@@ -125,6 +126,19 @@ const recommendedPlaylists = [
     apple: { resourceId: "pl.chill-1", resourceType: "playlists" as const },
   },
 ] satisfies readonly AppleCatalogPlaylist[]
+
+const homeSections = [
+  {
+    id: "recommendation:made-for-you",
+    title: "Made for You",
+    items: [recommendedPlaylists[0]!],
+  },
+  {
+    id: "recommendation:more-like-chill",
+    title: "More Like Chill",
+    items: [recommendedPlaylists[1]!],
+  },
+] satisfies readonly AppleHomeSection[]
 
 const savedPlaylists = [
   {
@@ -270,9 +284,9 @@ async function createApp(
       songResourceId: string,
       options?: Pick<SearchOptions, "signal">,
     ) => Promise<AppleCatalogAlbum>
-    getRecommendedPlaylists?: (
+    getHomeSections?: (
       options?: SearchOptions,
-    ) => Promise<SearchPage<AppleCatalogPlaylist>>
+    ) => Promise<SearchPage<AppleHomeSection>>
     getLibraryPlaylists?: (
       options?: SearchOptions,
     ) => Promise<SearchPage<AppleLibraryPlaylist>>
@@ -299,7 +313,7 @@ async function createApp(
     tracks: options.tracks ?? testTracks,
     onSearchSongs: options.searchSongs,
     onGetAlbumForSong: options.getAlbumForSong,
-    onGetRecommendedPlaylists: options.getRecommendedPlaylists,
+    onGetHomeSections: options.getHomeSections,
     onGetLibraryPlaylists: options.getLibraryPlaylists,
     onGetPlaylistTracks: options.getPlaylistTracks,
     onQuit,
@@ -317,7 +331,7 @@ describe("Nutka TUI", () => {
     await setup!.renderOnce()
     const frame = setup!.captureCharFrame()
 
-    expect(frame).toContain("Apple Music library is not loaded yet")
+    expect(frame).toContain("Apple Music Home is not loaded yet")
     expect(frame).not.toContain("First Track")
 
     setup!.mockInput.pressKey("g")
@@ -326,18 +340,24 @@ describe("Nutka TUI", () => {
     expect(setup!.captureCharFrame()).toContain("Type a search and press Enter")
   })
 
-  test("renders a single library workspace without duplicate navigation", async () => {
-    await createApp()
+  test("starts on Home and renders Apple's titled recommendation sections", async () => {
+    await createApp({
+      getHomeSections: async () => ({ items: homeSections, nextCursor: null }),
+    })
+    app!.setAppleAuthStatus({ state: "signedIn", storefront: "us" })
+    await Bun.sleep(0)
     await setup!.renderOnce()
     const frame = setup!.captureCharFrame()
 
-    expect(frame).toContain("nutka  /  library")
-    expect(frame).toContain("Library")
-    expect(frame).toContain("First Track")
+    expect(frame).toContain("nutka  /  home")
+    expect(frame).toContain("Home")
+    expect(frame).toContain("Made for You")
+    expect(frame).toContain("More Like Chill")
+    expect(frame).toContain("Favorites Mix")
+    expect(frame).toContain("Chill Mix")
+    expect(frame).not.toContain("First Track")
     expect(frame).toContain("nothing playing")
     expect(frame).not.toContain("up next")
-    expect(frame).not.toContain("playlists")
-    expect(frame).not.toContain("home")
   })
 
   test("opens pinned track info and traps background keys", async () => {
@@ -346,6 +366,8 @@ describe("Nutka TUI", () => {
       { kittyKeyboard: true, tracks: catalogTracks },
       () => quitCount++,
     )
+    setup!.mockInput.pressKey("g")
+    setup!.mockInput.pressKey("l")
 
     setup!.mockInput.pressKey("i")
     await setup!.renderOnce()
@@ -376,13 +398,13 @@ describe("Nutka TUI", () => {
       width: 60,
       height: 12,
       kittyKeyboard: true,
-      getRecommendedPlaylists: async () => ({ items: [longPlaylist], nextCursor: null }),
-      getLibraryPlaylists: async () => ({ items: [], nextCursor: null }),
+      getHomeSections: async () => ({
+        items: [{ ...homeSections[0]!, items: [longPlaylist] }],
+        nextCursor: null,
+      }),
     })
     app!.setAppleAuthStatus({ state: "signedIn", storefront: "us" })
     await Bun.sleep(0)
-    setup!.mockInput.pressKey("g")
-    setup!.mockInput.pressKey("p")
     setup!.mockInput.pressKey("i")
     await setup!.renderOnce()
 
@@ -428,14 +450,14 @@ describe("Nutka TUI", () => {
     expect(albumFrame).toContain("A focused album note.")
   })
 
-  test("shows deduplicated For You and library playlists and opens playable tracks", async () => {
+  test("keeps Home recommendations separate from saved playlists and opens tracks", async () => {
     const playback = new FakePlaybackController()
     const opened: ApplePlaylist[] = []
     await createApp({
       kittyKeyboard: true,
       playback,
-      getRecommendedPlaylists: async () => ({
-        items: recommendedPlaylists,
+      getHomeSections: async () => ({
+        items: homeSections,
         nextCursor: null,
       }),
       getLibraryPlaylists: async () => ({
@@ -450,17 +472,27 @@ describe("Nutka TUI", () => {
 
     app!.setAppleAuthStatus({ state: "signedIn", storefront: "us" })
     await Bun.sleep(0)
+    await setup!.renderOnce()
+    const home = setup!.captureCharFrame()
+
+    expect(home).toContain("nutka  /  home")
+    expect(home).toContain("Made for You")
+    expect(home).toContain("More Like Chill")
+    expect(home).toContain("Favorites Mix")
+    expect(home).toContain("Chill Mix")
+    expect(home).not.toContain("Coding")
+
     setup!.mockInput.pressKey("g")
     setup!.mockInput.pressKey("p")
+    await Bun.sleep(0)
     await setup!.renderOnce()
     const landing = setup!.captureCharFrame()
 
     expect(landing).toContain("nutka  /  playlists")
-    expect(landing).toContain("FOR YOU")
     expect(landing).toContain("YOUR LIBRARY")
-    expect(landing).toContain("Chill Mix")
     expect(landing).toContain("Coding")
     expect(landing.match(/Favorites Mix/g)).toHaveLength(1)
+    expect(landing).not.toContain("Chill Mix")
 
     setup!.mockInput.pressKey("/")
     await setup!.mockInput.typeText("Coding")
@@ -490,11 +522,10 @@ describe("Nutka TUI", () => {
     const cursors: Array<string | undefined> = []
     await createApp({
       playback,
-      getRecommendedPlaylists: async () => ({
-        items: [recommendedPlaylists[1]!],
+      getHomeSections: async () => ({
+        items: [homeSections[1]!],
         nextCursor: null,
       }),
-      getLibraryPlaylists: async () => ({ items: [], nextCursor: null }),
       getPlaylistTracks: async (_playlist, options) => {
         cursors.push(options?.cursor)
         return options?.cursor
@@ -505,8 +536,6 @@ describe("Nutka TUI", () => {
 
     app!.setAppleAuthStatus({ state: "signedIn", storefront: "us" })
     await Bun.sleep(0)
-    setup!.mockInput.pressKey("g")
-    setup!.mockInput.pressKey("p")
     setup!.mockInput.pressKey("r")
     await Bun.sleep(0)
     await Bun.sleep(0)
@@ -518,18 +547,53 @@ describe("Nutka TUI", () => {
       playback.plays[0]!.track.id,
       ...playback.plays[0]!.upcomingTracks.map((track) => track.id),
     ].sort()).toEqual(["apple:song:1", "apple:song:2"])
-    expect(app!.getState().destination).toBe("playlists")
-    expect(app!.getState().lists.playlists.selectedTrackId).toBe(
+    expect(app!.getState().destination).toBe("home")
+    expect(app!.getState().lists.home.selectedTrackId).toBe(
       recommendedPlaylists[1]!.id,
     )
-    expect(setup!.captureCharFrame()).not.toContain("playlists  /  playlist")
+    expect(setup!.captureCharFrame()).not.toContain("home  /  playlist")
     expect(setup!.captureCharFrame()).not.toContain("First Track")
+  })
+
+  test("loads the next page of Home sections", async () => {
+    const cursors: Array<string | undefined> = []
+    await createApp({
+      getHomeSections: async (options) => {
+        cursors.push(options?.cursor)
+        return options?.cursor
+          ? {
+              items: [{
+                ...homeSections[1]!,
+                items: recommendedPlaylists,
+              }],
+              nextCursor: null,
+            }
+          : { items: [homeSections[0]!], nextCursor: "/next-home-page" }
+      },
+    })
+
+    app!.setAppleAuthStatus({ state: "signedIn", storefront: "us" })
+    await Bun.sleep(0)
+    setup!.mockInput.pressKey("m")
+    await Bun.sleep(0)
+    await setup!.renderOnce()
+
+    expect(cursors).toEqual([undefined, "/next-home-page"])
+    const frame = setup!.captureCharFrame()
+    expect(frame).toContain("Made for You")
+    expect(frame).toContain("More Like Chill")
+    expect(frame).toContain("Favorites Mix")
+    expect(frame).toContain("Chill Mix")
+    expect(frame.match(/Favorites Mix/g)).toHaveLength(1)
+    setup!.mockInput.pressKey("j")
+    expect(app!.getState().lists.home.selectedTrackId).toBe(
+      recommendedPlaylists[1]!.id,
+    )
   })
 
   test("loads the next page for the selected playlist section", async () => {
     const cursors: Array<string | undefined> = []
     await createApp({
-      getRecommendedPlaylists: async () => ({ items: [], nextCursor: null }),
       getLibraryPlaylists: async (options) => {
         cursors.push(options?.cursor)
         return options?.cursor
@@ -553,6 +617,7 @@ describe("Nutka TUI", () => {
     await Bun.sleep(0)
     setup!.mockInput.pressKey("g")
     setup!.mockInput.pressKey("p")
+    await Bun.sleep(0)
     setup!.mockInput.pressKey("m")
     await Bun.sleep(0)
     await setup!.renderOnce()
@@ -561,15 +626,15 @@ describe("Nutka TUI", () => {
     expect(setup!.captureCharFrame()).toContain("Later Playlist")
   })
 
-  test("aborts and clears playlist requests when authorization changes", async () => {
-    const pendingRecommended = deferred<SearchPage<AppleCatalogPlaylist>>()
+  test("aborts and clears Home and playlist requests when authorization changes", async () => {
+    const pendingHome = deferred<SearchPage<AppleHomeSection>>()
     const pendingLibrary = deferred<SearchPage<AppleLibraryPlaylist>>()
-    let recommendationSignal: AbortSignal | undefined
+    let homeSignal: AbortSignal | undefined
     let librarySignal: AbortSignal | undefined
     await createApp({
-      getRecommendedPlaylists: (_options) => {
-        recommendationSignal = _options?.signal
-        return pendingRecommended.promise
+      getHomeSections: (_options) => {
+        homeSignal = _options?.signal
+        return pendingHome.promise
       },
       getLibraryPlaylists: (_options) => {
         librarySignal = _options?.signal
@@ -583,9 +648,9 @@ describe("Nutka TUI", () => {
     await Bun.sleep(0)
     app!.setAppleAuthStatus({ state: "signedOut" })
 
-    expect(recommendationSignal?.aborted).toBe(true)
+    expect(homeSignal?.aborted).toBe(true)
     expect(librarySignal?.aborted).toBe(true)
-    pendingRecommended.resolve({ items: [recommendedPlaylists[0]!], nextCursor: null })
+    pendingHome.resolve({ items: [homeSections[0]!], nextCursor: null })
     pendingLibrary.resolve({ items: [savedPlaylists[1]!], nextCursor: null })
     await Bun.sleep(0)
     await setup!.renderOnce()
@@ -599,11 +664,10 @@ describe("Nutka TUI", () => {
     let trackSignal: AbortSignal | undefined
     await createApp({
       kittyKeyboard: true,
-      getRecommendedPlaylists: async () => ({
-        items: [recommendedPlaylists[1]!],
+      getHomeSections: async () => ({
+        items: [homeSections[1]!],
         nextCursor: null,
       }),
-      getLibraryPlaylists: async () => ({ items: [], nextCursor: null }),
       getPlaylistTracks: (_playlist, _options) => {
         trackSignal = _options?.signal
         return pendingTracks.promise
@@ -611,8 +675,6 @@ describe("Nutka TUI", () => {
     })
 
     app!.setAppleAuthStatus({ state: "signedIn", storefront: "us" })
-    setup!.mockInput.pressKey("g")
-    setup!.mockInput.pressKey("p")
     await Bun.sleep(0)
     setup!.mockInput.pressEnter()
     await Bun.sleep(0)
@@ -628,6 +690,8 @@ describe("Nutka TUI", () => {
   test("moves selection without simulating unavailable playback", async () => {
     await createApp()
 
+    setup!.mockInput.pressKey("g")
+    setup!.mockInput.pressKey("l")
     setup!.mockInput.pressKey("j")
     setup!.mockInput.pressEnter()
     setup!.mockInput.pressKey(" ")
@@ -1126,6 +1190,8 @@ describe("Nutka TUI", () => {
   test("cancels a local filter and restores the original selection", async () => {
     await createApp({ kittyKeyboard: true })
 
+    setup!.mockInput.pressKey("g")
+    setup!.mockInput.pressKey("l")
     setup!.mockInput.pressKey("j")
     setup!.mockInput.pressKey("/")
     await setup!.mockInput.typeText("third")
@@ -1161,7 +1227,8 @@ describe("Nutka TUI", () => {
     setup!.mockInput.pressKey("?")
     await setup!.renderOnce()
     expect(setup!.captureCharFrame()).toContain("keyboard help")
-    expect(setup!.captureCharFrame()).toContain("g l  library")
+    expect(setup!.captureCharFrame()).toContain("g h home")
+    expect(setup!.captureCharFrame()).toContain("g l library")
     expect(setup!.captureCharFrame()).toContain("i           item info")
     expect(setup!.captureCharFrame()).toContain("v    visualizer")
     expect(setup!.captureCharFrame()).toContain("shift+←/→  seek 15s")
@@ -1177,6 +1244,8 @@ describe("Nutka TUI", () => {
 
   test("adapts the same workspace across wide and narrow terminals", async () => {
     await createApp()
+    setup!.mockInput.pressKey("g")
+    setup!.mockInput.pressKey("l")
     await setup!.renderOnce()
     expect(setup!.captureCharFrame()).toContain("First Album")
 
@@ -1192,6 +1261,8 @@ describe("Nutka TUI", () => {
 
   test("keeps track rows visible at the visualizer layout threshold", async () => {
     await createApp({ width: 100, height: 18 })
+    setup!.mockInput.pressKey("g")
+    setup!.mockInput.pressKey("l")
     await setup!.renderOnce()
 
     expect(setup!.captureCharFrame()).toContain("First Track")
@@ -1206,6 +1277,8 @@ describe("Nutka TUI", () => {
       durationSeconds: 180,
     }))
     await createApp({ width: 100, height: 32, tracks })
+    setup!.mockInput.pressKey("g")
+    setup!.mockInput.pressKey("l")
     await setup!.renderOnce()
     expect(setup!.captureCharFrame()).not.toContain("Track 16")
 
@@ -1231,6 +1304,8 @@ describe("Nutka TUI", () => {
 
   test("preserves content and controls in a very short terminal", async () => {
     await createApp({ width: 60, height: 10 })
+    setup!.mockInput.pressKey("g")
+    setup!.mockInput.pressKey("l")
     await setup!.renderOnce()
     const frame = setup!.captureCharFrame()
 

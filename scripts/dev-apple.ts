@@ -1,14 +1,22 @@
 export {}
 
+import { join } from "node:path"
+
+import { prepareSignerEnvironment } from "./apple-signer-environment"
 import { createClientEnvironment } from "./client-environment"
 
 const signerHost = "127.0.0.1"
 const signerPort = "8788"
 const signerUrl = `http://${signerHost}:${signerPort}`
 const clientEnvironment = createClientEnvironment()
+const serviceDirectory = join(process.cwd(), "services", "apple-token")
+const signerEnvironment = await prepareSignerEnvironment(serviceDirectory)
 
-const signer = Bun.spawn({
-  cmd: [
+let signer: Bun.Subprocess | undefined
+let app: Bun.Subprocess | undefined
+
+try {
+  const signerCommand = [
     process.execPath,
     "run",
     "--cwd",
@@ -19,25 +27,22 @@ const signer = Bun.spawn({
     signerHost,
     "--port",
     signerPort,
-  ],
-  cwd: process.cwd(),
-  env: process.env,
-  stdin: "ignore",
-  stdout: "inherit",
-  stderr: "inherit",
-})
+  ]
+  if (signerEnvironment.envFile) {
+    signerCommand.push("--env-file", signerEnvironment.envFile)
+  }
+  signer = Bun.spawn({
+    cmd: signerCommand,
+    cwd: process.cwd(),
+    env: process.env,
+    stdin: "ignore",
+    stdout: "inherit",
+    stderr: "inherit",
+  })
 
-let app: Bun.Subprocess | undefined
+  process.once("SIGINT", stopChildren)
+  process.once("SIGTERM", stopChildren)
 
-function stopChildren(): void {
-  app?.kill()
-  signer.kill()
-}
-
-process.once("SIGINT", stopChildren)
-process.once("SIGTERM", stopChildren)
-
-try {
   await waitForSigner(signerUrl, signer)
 
   app = Bun.spawn({
@@ -56,7 +61,13 @@ try {
   process.exitCode = exitCode
 } finally {
   stopChildren()
-  await signer.exited
+  await signer?.exited
+  await signerEnvironment.cleanup()
+}
+
+function stopChildren(): void {
+  app?.kill()
+  signer?.kill()
 }
 
 async function waitForSigner(

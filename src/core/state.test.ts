@@ -31,11 +31,12 @@ function reduce(state: AppState, ...actions: Parameters<typeof reduceAppState>[1
 }
 
 describe("createInitialState", () => {
-  test("starts in the library with the first track selected", () => {
+  test("starts at Home while preserving the first Library track", () => {
     expect(createInitialState(trackIds)).toEqual({
-      destination: "library",
+      destination: "home",
       mode: { type: "normal", pendingKey: null },
       lists: {
+        home: { selectedTrackId: null, filter: "" },
         library: { selectedTrackId: "a", filter: "" },
         playlists: { selectedTrackId: null, filter: "" },
         search: { selectedTrackId: null, filter: "" },
@@ -56,6 +57,7 @@ describe("createInitialState", () => {
     const first = createInitialState([])
     const second = createInitialState([])
 
+    expect(first.lists.home.selectedTrackId).toBeNull()
     expect(first.lists.library.selectedTrackId).toBeNull()
     expect(first.lists).not.toBe(second.lists)
     expect(first.playback.queueTrackIds).not.toBe(second.playback.queueTrackIds)
@@ -89,7 +91,10 @@ describe("filterTracks", () => {
 
 describe("list navigation", () => {
   test("moves and clamps selection using visible track IDs", () => {
-    const initial = createInitialState(trackIds)
+    const initial = reduceAppState(createInitialState(trackIds), {
+      type: "navigate",
+      destination: "library",
+    })
     const bottom = reduce(
       initial,
       { type: "move-selection", delta: 2, visibleTrackIds: trackIds },
@@ -106,16 +111,16 @@ describe("list navigation", () => {
   })
 
   test("recovers missing selection and clears selection for an empty list", () => {
-    const missing = reduceAppState(createInitialState(["gone"]), {
-      type: "move-selection",
-      delta: 1,
-      visibleTrackIds: ["a", "b"],
-    })
-    const backwards = reduceAppState(createInitialState(["gone"]), {
-      type: "move-selection",
-      delta: -1,
-      visibleTrackIds: ["a", "b"],
-    })
+    const missing = reduce(
+      createInitialState(["gone"]),
+      { type: "navigate", destination: "library" },
+      { type: "move-selection", delta: 1, visibleTrackIds: ["a", "b"] },
+    )
+    const backwards = reduce(
+      createInitialState(["gone"]),
+      { type: "navigate", destination: "library" },
+      { type: "move-selection", delta: -1, visibleTrackIds: ["a", "b"] },
+    )
     const empty = reduceAppState(missing, {
       type: "move-selection",
       delta: 1,
@@ -130,6 +135,7 @@ describe("list navigation", () => {
   test("keeps selection and filters independent per destination", () => {
     const state = reduce(
       createInitialState(trackIds),
+      { type: "navigate", destination: "library" },
       { type: "select-track", trackId: "b" },
       { type: "navigate", destination: "queue" },
       { type: "select-track", trackId: "c" },
@@ -139,6 +145,30 @@ describe("list navigation", () => {
     expect(state.destination).toBe("library")
     expect(state.lists.library.selectedTrackId).toBe("b")
     expect(state.lists.queue.selectedTrackId).toBe("c")
+  })
+
+  test("preserves Home selection and filter across navigation", () => {
+    const state = reduce(
+      createInitialState(trackIds),
+      { type: "select-track", trackId: "home-a" },
+      { type: "open-filter" },
+      {
+        type: "edit-filter",
+        draft: "featured",
+        visibleTrackIds: ["home-b"],
+      },
+      { type: "submit-filter" },
+      { type: "navigate", destination: "library" },
+      { type: "move-selection", delta: 1, visibleTrackIds: trackIds },
+      { type: "navigate", destination: "home" },
+    )
+
+    expect(state.destination).toBe("home")
+    expect(state.lists.home).toEqual({
+      selectedTrackId: "home-b",
+      filter: "featured",
+    })
+    expect(state.lists.library.selectedTrackId).toBe("b")
   })
 })
 
@@ -195,6 +225,7 @@ describe("filter mode", () => {
   test("opens from the committed filter and previews visible selection", () => {
     const filtered = reduce(
       createInitialState(trackIds),
+      { type: "navigate", destination: "library" },
       { type: "open-filter" },
       { type: "edit-filter", draft: "be", visibleTrackIds: ["b"] },
     )
@@ -213,6 +244,7 @@ describe("filter mode", () => {
   test("submits the draft and keeps the preview selection", () => {
     const submitted = reduce(
       createInitialState(trackIds),
+      { type: "navigate", destination: "library" },
       { type: "open-filter" },
       { type: "edit-filter", draft: "be", visibleTrackIds: ["b"] },
       { type: "submit-filter" },
@@ -228,6 +260,7 @@ describe("filter mode", () => {
   test("preserves selection while it remains visible", () => {
     const editing = reduce(
       createInitialState(trackIds),
+      { type: "navigate", destination: "library" },
       { type: "select-track", trackId: "b" },
       { type: "open-filter" },
       { type: "edit-filter", draft: "", visibleTrackIds: trackIds },
@@ -239,6 +272,7 @@ describe("filter mode", () => {
   test("cancel and generic close restore the original selection", () => {
     const editing = reduce(
       createInitialState(trackIds),
+      { type: "navigate", destination: "library" },
       { type: "select-track", trackId: "b" },
       { type: "open-filter" },
       { type: "edit-filter", draft: "c", visibleTrackIds: ["c"] },
@@ -256,6 +290,7 @@ describe("filter mode", () => {
   test("keeps an existing committed filter when canceling", () => {
     const committed = reduce(
       createInitialState(trackIds),
+      { type: "navigate", destination: "library" },
       { type: "open-filter" },
       { type: "edit-filter", draft: "a", visibleTrackIds: ["a"] },
       { type: "submit-filter" },

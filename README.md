@@ -23,14 +23,16 @@ This starts the empty TUI shell and needs no service or Apple credentials.
 On Omarchy, Nutka reads the active theme colors at startup and matches apps using
 the system theme, including OpenCode.
 
-To run the local Cloudflare signer and Apple-enabled client together, first
-create an untracked `services/apple-token/.dev.vars` from that package's
-`.dev.vars.example`. Put the Apple key contents there and set
-`SIGNING_ENABLED="true"`. Then run:
+To run the local Cloudflare signer and Apple-enabled client together, run:
 
 ```sh
 bun run dev:apple
 ```
+
+The launcher accepts either an untracked `services/apple-token/.dev.vars` or the
+existing root `.env` variables used by the original local service. When using a
+root `APPLE_PRIVATE_KEY_PATH`, it gives Wrangler a temporary mode-`0600` env file
+and deletes it on exit.
 
 That command starts Wrangler on `127.0.0.1:8788`, waits for it, then starts
 Nutka. Nutka starts its own authorization and playback server on
@@ -92,10 +94,12 @@ Omarchy-compatible TOML theme and optionally define `visualizer_low`,
   the now-playing panel shows compact transport icons
 - `v`: toggle the visualizer and suspend or resume PipeWire audio analysis
 - `Ctrl+P`: open commands and navigation
-- `g l`, `g p`, `g s`, `g q`: go to Library, Playlists, Search, or Queue
-- Playlists: browse deduplicated For You and Your Library sections; press `Enter`
-  to open a playlist, press `r` to shuffle-play the selected playlist without
-  opening it, and press `Escape` to return
+- `g h`, `g l`, `g p`, `g s`, `g q`: go to Home, Library, Playlists, Search, or Queue
+- Home: browse Apple's titled personalized recommendation sections; press `m`
+  to load more sections when available
+- Playlists: browse playlists saved in Your Library
+- Home and Playlists: press `Enter` to open a playlist, press `r` to
+  shuffle-play it without opening it, and press `Escape` to return
 - Playlist tracks: press `Enter` to play the selected song and queue the visible
   songs after it; press `m` to load the next page when available
 - Search: type a query and press `Enter` to search Apple Music songs
@@ -110,11 +114,12 @@ Omarchy-compatible TOML theme and optionally define `visualizer_low`,
 ## Current status
 
 Phase 4 Linux playback integration is complete. Nutka has no bundled catalog;
-Search loads real Apple Music songs and selected-song albums, Playlists loads
-personalized recommendations and saved library playlists, Library remains empty,
-and Queue shows the worker-confirmed upcoming songs. A supervised hidden
-Chromium worker provides real play, pause, resume, previous, next, seek, stop,
-now-playing updates, and a PipeWire-driven spectrum without optimistic UI state.
+Home loads titled personalized recommendation sections, Search loads real Apple
+Music songs and selected-song albums, Playlists loads saved library playlists,
+Library remains empty, and Queue shows the worker-confirmed upcoming songs. A
+supervised hidden Chromium worker provides real play, pause, resume, previous,
+next, seek, stop, now-playing updates, and a PipeWire-driven spectrum without
+optimistic UI state.
 The hosted Hono signer supports real ES256 signing without receiving user
 credentials. Nutka owns the loopback-only MusicKit login and playback pages,
 Apple session validation, secure OS-keyring persistence, and secret-safe
