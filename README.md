@@ -40,6 +40,13 @@ Nutka. Nutka starts its own authorization and playback server on
 configured through private Worker bindings documented in
 [`services/apple-token/README.md`](services/apple-token/README.md).
 
+Wrangler output is kept out of the full-screen terminal and written to
+`~/.local/state/nutka/apple-signer.log` (or
+`$XDG_STATE_HOME/nutka/apple-signer.log`) with `0600` permissions. The file is
+replaced on each `bun run dev:apple` launch. Set `NUTKA_APPLE_SIGNER_LOG` to a
+different path, or to `off` to discard signer output. Startup failures include
+the active log path so the signer can be diagnosed without corrupting the TUI.
+
 With real Apple credentials configured, open `Ctrl+P` and run `Sign in to Apple
 Music`. Nutka opens one visible Chromium window using its private playback
 profile. The localhost page connects through a one-time URL fragment, Apple
