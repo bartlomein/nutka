@@ -19,6 +19,13 @@ describe("PcmSpectrumAnalyzer", () => {
     expect(low.peak).toBeGreaterThan(200)
   })
 
+  test("keeps equal-amplitude tones level across logarithmic band widths", () => {
+    const levels = [7, 85, 682].map((bin) =>
+      Math.max(...analyzeSine(bin * 48_000 / 4_096).bands))
+
+    expect(Math.max(...levels) - Math.min(...levels)).toBeLessThanOrEqual(2)
+  })
+
   test("handles arbitrary byte boundaries without changing the analysis", () => {
     const pcm = sinePcm(440, 8_192)
     const whole: SpectrumSample[] = []

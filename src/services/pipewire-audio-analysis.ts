@@ -417,12 +417,10 @@ function analyzeWindow(
       firstBin = Math.max(1, Math.min(magnitudes.length - 1, Math.round((low + high) / 2 / binWidth)))
       lastBin = firstBin
     }
-    let energy = 0
+    let magnitude = 0
     for (let bin = firstBin; bin <= lastBin; bin++) {
-      const magnitude = magnitudes[bin]!
-      energy += magnitude * magnitude
+      magnitude = Math.max(magnitude, magnitudes[bin]!)
     }
-    const magnitude = Math.sqrt(energy / (lastBin - firstBin + 1))
     const target = normalizeDecibels(magnitude, -78, -6)
     const previous = smoothedBands[band]!
     const smoothing = target > previous ? 0.68 : 0.2
