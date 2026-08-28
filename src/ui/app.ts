@@ -2372,6 +2372,8 @@ export function createNutkaApp(
           ? renderer.terminalWidth < 64
             ? "j/k scroll  i/esc close"
             : "Item information   j/k or ↑/↓ scroll   i/esc close"
+        : state.mode.type === "normal" && currentSongLike?.status === "error"
+          ? "Could not update favorite   l retry"
         : activeBrowsePage && state.mode.type === "normal"
           ? browseFooterHelp(activeBrowsePage, renderer.terminalWidth)
         : showingPlaylist && state.mode.type === "normal"

@@ -51,7 +51,7 @@ describe("PlayerPanel", () => {
 
     await setup.renderOnce()
     const frame = setup.captureCharFrame()
-    expect(frame).toContain("▶  ♡  Angel")
+    expect(frame).toContain("▶  ☆  Angel")
     expect(frame).toContain("Angel")
     expect(frame).toContain("Massive Attack  ·  Mezzanine")
     expect(frame).toContain("1:42")
@@ -65,7 +65,7 @@ describe("PlayerPanel", () => {
     expect(frame).toContain("REPEAT ALL")
     expect(frame).not.toContain("SPACE  PAUSE")
     const lines = frame.split("\n")
-    expect(lines.find((line) => line.includes("▶  ♡  Angel"))?.indexOf("▶")).toBeGreaterThan(40)
+    expect(lines.find((line) => line.includes("▶  ☆  Angel"))?.indexOf("▶")).toBeGreaterThan(40)
     expect(
       lines.find((line) => line.includes("Massive Attack  ·  Mezzanine"))
         ?.indexOf("Massive Attack"),
@@ -254,7 +254,7 @@ describe("PlayerPanel", () => {
 
     await setup.renderOnce()
     const frame = setup.captureCharFrame()
-    expect(frame).toContain("♥ saving  Angel")
+    expect(frame).toContain("★  Angel")
     expect(frame).toContain("SHUFFLE OFF")
     expect(frame).toContain("REPEAT OFF")
     expect(frame).toContain("│◀ Ⅱ ▶│")

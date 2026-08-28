@@ -322,13 +322,13 @@ function likeStatusPrefix(state: PlayerPanelState): string {
     case "unavailable":
       return ""
     case "loading":
-      return "◌ checking like  "
+      return "◌  "
     case "ready":
-      return state.liked ? "♥ liked  " : "♡  "
+      return state.liked ? "★  " : "☆  "
     case "saving":
-      return state.liked ? "♥ saving  " : "♡ saving  "
+      return state.liked ? "★  " : "☆  "
     case "error":
-      return state.liked ? "♥ like failed  " : "♡ like failed  "
+      return state.liked ? "★  " : "☆  "
   }
 }
 

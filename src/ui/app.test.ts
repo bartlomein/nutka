@@ -1262,22 +1262,22 @@ describe("Nutka TUI", () => {
     })
     await setup!.renderOnce()
     expect(loads).toEqual(["1"])
-    expect(setup!.captureCharFrame()).toContain("checking like")
+    expect(setup!.captureCharFrame()).toContain("◌  First Track")
 
     initialLike.resolve(false)
     await Bun.sleep(0)
     await setup!.renderOnce()
-    expect(setup!.captureCharFrame()).toContain("♡  First Track")
+    expect(setup!.captureCharFrame()).toContain("☆  First Track")
 
     setup!.mockInput.pressKey("l")
     await setup!.renderOnce()
     expect(saves).toEqual([{ resourceId: "1", liked: true }])
-    expect(setup!.captureCharFrame()).toContain("♥ saving  First Track")
+    expect(setup!.captureCharFrame()).toContain("★  First Track")
 
     savedLike.resolve()
     await Bun.sleep(0)
     await setup!.renderOnce()
-    expect(setup!.captureCharFrame()).toContain("♥ liked  First Track")
+    expect(setup!.captureCharFrame()).toContain("★  First Track")
 
     setup!.mockInput.pressKey("l")
     await Bun.sleep(0)
@@ -1286,7 +1286,7 @@ describe("Nutka TUI", () => {
       { resourceId: "1", liked: true },
       { resourceId: "1", liked: false },
     ])
-    expect(setup!.captureCharFrame()).toContain("♡  First Track")
+    expect(setup!.captureCharFrame()).toContain("☆  First Track")
   })
 
   test("rolls back a failed like change without exposing the service error", async () => {
@@ -1314,7 +1314,8 @@ describe("Nutka TUI", () => {
     await Bun.sleep(0)
     await setup!.renderOnce()
     const frame = setup!.captureCharFrame()
-    expect(frame).toContain("♥ like failed  First Track")
+    expect(frame).toContain("★  First Track")
+    expect(frame).toContain("Could not update favorite")
     expect(frame).not.toContain("private service details")
   })
 
