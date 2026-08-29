@@ -1,11 +1,12 @@
 import type {
   PlaybackRepeatMode,
   PlaybackShuffleMode,
+  PlaybackSource,
   PlaybackStatus,
   Track,
 } from "./types"
 
-export type Destination = "home" | "library" | "playlists" | "search" | "queue"
+export type Destination = "home" | "library" | "playlists" | "radio" | "search" | "queue"
 
 export interface ListState {
   selectedTrackId: string | null
@@ -34,6 +35,11 @@ export interface PlaybackState {
   repeatMode: PlaybackRepeatMode
   canSetShuffleMode: boolean
   canSetRepeatMode: boolean
+  source: PlaybackSource | null
+  dynamicQueue: boolean
+  canSeek: boolean
+  canSkipNext: boolean
+  canSkipPrevious: boolean
 }
 
 export interface AppState {
@@ -85,6 +91,11 @@ export type AppAction =
       repeatMode: PlaybackRepeatMode
       canSetShuffleMode: boolean
       canSetRepeatMode: boolean
+      source?: PlaybackSource | null
+      dynamicQueue?: boolean
+      canSeek?: boolean
+      canSkipNext?: boolean
+      canSkipPrevious?: boolean
     }
 
 export function createInitialState(trackIds: readonly string[]): AppState {
@@ -95,6 +106,7 @@ export function createInitialState(trackIds: readonly string[]): AppState {
       home: { selectedTrackId: null, filter: "" },
       library: { selectedTrackId: trackIds[0] ?? null, filter: "" },
       playlists: { selectedTrackId: null, filter: "" },
+      radio: { selectedTrackId: null, filter: "" },
       search: { selectedTrackId: null, filter: "" },
       queue: { selectedTrackId: null, filter: "" },
     },
@@ -109,6 +121,11 @@ export function createInitialState(trackIds: readonly string[]): AppState {
       repeatMode: "none",
       canSetShuffleMode: false,
       canSetRepeatMode: false,
+      source: null,
+      dynamicQueue: false,
+      canSeek: false,
+      canSkipNext: false,
+      canSkipPrevious: false,
     },
   }
 }
@@ -360,6 +377,11 @@ export function reduceAppState(
           repeatMode: action.repeatMode,
           canSetShuffleMode: action.canSetShuffleMode,
           canSetRepeatMode: action.canSetRepeatMode,
+          source: action.source ?? null,
+          dynamicQueue: action.dynamicQueue ?? false,
+          canSeek: action.canSeek ?? true,
+          canSkipNext: action.canSkipNext ?? true,
+          canSkipPrevious: action.canSkipPrevious ?? true,
         },
       }
     }

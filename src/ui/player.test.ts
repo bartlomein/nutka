@@ -296,6 +296,39 @@ describe("PlayerPanel", () => {
     expect(setup.captureCharFrame()).toContain("NEXT  queue repeats")
     setup.renderer.destroy()
   })
+
+  test("shows live station context and never calls an empty dynamic queue finished", async () => {
+    const setup = await createTestRenderer({ width: 100, height: 8 })
+    const player = createPlayerPanel(setup.renderer)
+    setup.renderer.root.add(player.root)
+    player.render({
+      status: "playing",
+      currentTrack,
+      queue: [],
+      positionSeconds: 0,
+      durationSeconds: null,
+      errorMessage: null,
+      connected: true,
+      shuffleMode: "off",
+      repeatMode: "none",
+      canSetShuffleMode: false,
+      canSetRepeatMode: false,
+      source: { type: "station", id: "live", title: "Apple Music 1", isLive: true },
+      dynamicQueue: true,
+      canSeek: false,
+      canSkipNext: true,
+      canSkipPrevious: false,
+      liked: false,
+      likeStatus: "ready",
+    })
+
+    await setup.renderOnce()
+    const frame = setup.captureCharFrame()
+    expect(frame).toContain("LIVE Apple Music 1")
+    expect(frame).toContain("QUEUE  radio continues")
+    expect(frame).not.toContain("end of queue")
+    setup.renderer.destroy()
+  })
 })
 
 describe("formatProgressLine", () => {

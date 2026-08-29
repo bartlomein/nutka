@@ -1,64 +1,37 @@
 import { rm } from "node:fs/promises"
-import { join } from "node:path"
 
 import type {
   AudioAnalysisSource,
   AudioSpectrumFrame,
   AppleCatalogTrack,
+  AppleCatalogStation,
   PlaybackController,
   PlaybackRepeatMode,
   PlaybackShuffleMode,
   PlaybackSnapshot,
+  Station,
 } from "../core/types"
 import {
-  MAX_PLAYBACK_MESSAGE_BYTES,
-  decodePlaybackWorkerResponse,
-  encodePlaybackMessage,
+  MAX_PLAYBACK_QUEUE_ITEMS,
   type PlaybackWorkerResponse,
   type PlaybackWorkerTrack,
+  type PlaybackWorkerItem,
 } from "./apple-playback-protocol"
 import { loopbackPlaybackUrl } from "./apple-playback-origin"
 import {
   applePlaybackProfilePath,
   defaultChromiumExecutablePath,
-  playbackBrowserEnvironment,
 } from "./apple-playback-probe"
+import {
+  ApplePlaybackError,
+  createProcessPlaybackWorkerClient,
+  type PlaybackWorkerClient,
+} from "./apple-playback-worker-client"
 import { requestDeveloperToken, type Fetch } from "./token-service"
+import type { PlaybackLogger } from "./playback-log"
 
-const INITIALIZE_TIMEOUT_MS = 45_000
-const PLAY_TIMEOUT_MS = 35_000
-const CONTROL_TIMEOUT_MS = 15_000
-const SHUTDOWN_TIMEOUT_MS = 2_000
-
-export class ApplePlaybackError extends Error {
-  constructor(readonly code: string) {
-    super("Apple Music playback is unavailable")
-    this.name = "ApplePlaybackError"
-  }
-}
-
-interface PlaybackWorkerInitialization {
-  executablePath: string
-  playbackUrl: string
-  profilePath: string
-  developerToken: string
-  musicUserToken: string
-}
-
-export interface PlaybackWorkerClient {
-  initialize(options: PlaybackWorkerInitialization): Promise<void>
-  setAudioAnalysisEnabled(enabled: boolean): Promise<void>
-  play(loadId: number, tracks: readonly PlaybackWorkerTrack[]): Promise<void>
-  pause(): Promise<void>
-  resume(): Promise<void>
-  previous(): Promise<void>
-  next(): Promise<void>
-  setShuffleMode(mode: PlaybackShuffleMode): Promise<void>
-  setRepeatMode(mode: PlaybackRepeatMode): Promise<void>
-  seek(positionSeconds: number): Promise<void>
-  stop(): Promise<void>
-  dispose(): Promise<void>
-}
+export { ApplePlaybackError }
+export type { PlaybackWorkerClient }
 
 export interface ApplePlaybackControllerOptions {
   serviceUrl: string
@@ -72,6 +45,7 @@ export interface ApplePlaybackControllerOptions {
     onExit: (errorCode: string) => void,
     onSpectrum: (frame: Extract<PlaybackWorkerResponse, { type: "spectrum" }>) => void,
   ) => PlaybackWorkerClient
+  logger?: PlaybackLogger
 }
 
 const idleSnapshot: PlaybackSnapshot<AppleCatalogTrack> = {
@@ -85,6 +59,11 @@ const idleSnapshot: PlaybackSnapshot<AppleCatalogTrack> = {
   repeatMode: "none",
   canSetShuffleMode: false,
   canSetRepeatMode: false,
+  source: null,
+  dynamicQueue: false,
+  canSeek: false,
+  canSkipNext: false,
+  canSkipPrevious: false,
 }
 
 export class ApplePlaybackController implements PlaybackController<AppleCatalogTrack> {
@@ -97,8 +76,10 @@ export class ApplePlaybackController implements PlaybackController<AppleCatalogT
     frame: AudioSpectrumFrame | null,
   ) => void>()
   private readonly queues = new Map<number, readonly AppleCatalogTrack[]>()
+  private readonly stations = new Map<number, AppleCatalogStation>()
   private worker?: PlaybackWorkerClient
   private workerPromise?: Promise<PlaybackWorkerClient>
+  private workerSession?: object
   private disconnectPromise?: Promise<void>
   private authorizationClearPromise?: Promise<void>
   private workerGeneration = 0
@@ -111,8 +92,11 @@ export class ApplePlaybackController implements PlaybackController<AppleCatalogT
   private analysisAcceptingFrames = true
   private analysisControlVersion = 0
   private disposed = false
+  private readonly logger: PlaybackLogger
 
-  constructor(private readonly options: ApplePlaybackControllerOptions) {}
+  constructor(private readonly options: ApplePlaybackControllerOptions) {
+    this.logger = options.logger ?? { log() {} }
+  }
 
   readonly audioAnalysis: AudioAnalysisSource = {
     subscribe: (listener) => this.subscribeAudioAnalysis(listener),
@@ -130,7 +114,9 @@ export class ApplePlaybackController implements PlaybackController<AppleCatalogT
     this.listeners.add(listener)
     try {
       listener(this.currentSnapshot)
-    } catch {}
+    } catch (error) {
+      this.logIgnoredFailure("snapshot_listener_failed", error)
+    }
     return () => this.listeners.delete(listener)
   }
 
@@ -148,6 +134,7 @@ export class ApplePlaybackController implements PlaybackController<AppleCatalogT
       this.analysisAcceptingFrames = false
       this.setAnalysis(null)
       this.queues.set(loadId, tracks)
+      this.stations.delete(loadId)
       try {
         await (await this.getWorker()).play(
           loadId,
@@ -156,15 +143,82 @@ export class ApplePlaybackController implements PlaybackController<AppleCatalogT
             resourceId: item.apple.playParams!.id,
           })),
         )
+        this.assertWorkerGeneration(generation)
         this.analysisAcceptingFrames = this.analysisEnabled
         for (const knownLoadId of this.queues.keys()) {
           if (knownLoadId < loadId) this.queues.delete(knownLoadId)
         }
+        for (const knownLoadId of this.stations.keys()) {
+          if (knownLoadId < loadId) this.stations.delete(knownLoadId)
+        }
       } catch (error) {
+        this.logger.log("track_play_failed", { code: playbackErrorCode(error) })
         this.queues.delete(loadId)
         if (generation === this.workerGeneration) {
           this.analysisAcceptingFrames = this.analysisEnabled
           this.setError(playbackErrorCode(error))
+        }
+        throw error
+      }
+    })
+  }
+
+  async playStation(station: Station): Promise<void> {
+    this.assertUsable()
+    const resourceId = "apple" in station
+      ? (station as AppleCatalogStation).apple.resourceId
+      : undefined
+    this.logger.log("station_play_requested", resourceId ? { resourceId } : undefined)
+    if (!isPlayableStation(station)) {
+      this.setError("invalid_station")
+      this.logger.log("station_play_failed", { code: "invalid_station" })
+      throw new ApplePlaybackError("invalid_station")
+    }
+    if (station.apple.externalLiveStream) {
+      this.setError("external_station_unsupported")
+      this.logger.log("station_play_failed", {
+        resourceId: station.apple.resourceId,
+        code: "external_station_unsupported",
+      })
+      throw new ApplePlaybackError("external_station_unsupported")
+    }
+    return this.runCommand(async () => {
+      const generation = this.workerGeneration
+      const loadId = this.nextLoadId++
+      this.activeLoadId = null
+      this.activeQueuePosition = -1
+      this.analysisAcceptingFrames = false
+      this.setAnalysis(null)
+      this.stations.set(loadId, station)
+      try {
+        await (await this.getWorker()).playStation(
+          loadId,
+          station.apple.resourceId,
+          station.title,
+          station.isLive,
+        )
+        this.assertWorkerGeneration(generation)
+        this.logger.log("station_play_confirmed", { resourceId: station.apple.resourceId })
+        this.analysisAcceptingFrames = this.analysisEnabled
+        for (const knownLoadId of this.stations.keys()) {
+          if (knownLoadId < loadId) this.stations.delete(knownLoadId)
+        }
+        for (const knownLoadId of this.queues.keys()) {
+          if (knownLoadId < loadId) this.queues.delete(knownLoadId)
+        }
+      } catch (error) {
+        const code = playbackErrorCode(error) === "playback_timeout" &&
+            station.apple.externalLiveStream
+          ? "external_station_unsupported"
+          : playbackErrorCode(error)
+        this.logger.log("station_play_failed", {
+          resourceId: station.apple.resourceId,
+          code,
+        })
+        this.stations.delete(loadId)
+        if (generation === this.workerGeneration) {
+          this.analysisAcceptingFrames = this.analysisEnabled
+          this.setError(code)
         }
         throw error
       }
@@ -192,11 +246,7 @@ export class ApplePlaybackController implements PlaybackController<AppleCatalogT
   async next(): Promise<void> {
     this.assertUsable()
     if (
-      this.activeLoadId === null ||
-      (
-        this.currentSnapshot.queue.length === 0 &&
-        this.currentSnapshot.repeatMode === "none"
-      )
+      this.activeLoadId === null || this.currentSnapshot.canSkipNext !== true
     ) return
     await this.runCommand(() => this.runControl((worker) => worker.next()))
   }
@@ -220,6 +270,7 @@ export class ApplePlaybackController implements PlaybackController<AppleCatalogT
     if (!Number.isFinite(positionSeconds) || positionSeconds < 0) {
       throw new ApplePlaybackError("invalid_seek")
     }
+    if (this.currentSnapshot.canSeek !== true) return
     await this.runCommand(() => this.runControl((worker) => worker.seek(positionSeconds)))
   }
 
@@ -240,18 +291,24 @@ export class ApplePlaybackController implements PlaybackController<AppleCatalogT
 
   private async runDisconnect(): Promise<void> {
     this.workerGeneration++
+    this.workerSession = undefined
     const worker = this.worker
     const starting = this.workerPromise
     this.worker = undefined
     this.workerPromise = undefined
     this.queues.clear()
+    this.stations.clear()
     this.activeLoadId = null
     this.activeQueuePosition = -1
     this.setAnalysis(null)
     this.setSnapshot(idleSnapshot)
-    await worker?.dispose().catch(() => {})
+    await worker?.dispose().catch((error) => {
+      this.logIgnoredFailure("worker_dispose_failed", error)
+    })
     if (starting) {
-      await starting.then((pendingWorker) => pendingWorker.dispose()).catch(() => {})
+      await starting.then((pendingWorker) => pendingWorker.dispose()).catch((error) => {
+        this.logIgnoredFailure("starting_worker_dispose_failed", error)
+      })
     }
   }
 
@@ -300,22 +357,31 @@ export class ApplePlaybackController implements PlaybackController<AppleCatalogT
     if (this.workerPromise) return this.workerPromise
 
     const generation = this.workerGeneration
-    const starting = this.startWorker(generation)
+    const session = {}
+    this.workerSession = session
+    const starting = this.startWorker(generation, session)
     this.workerPromise = starting
     try {
       const worker = await starting
-      if (this.disposed || generation !== this.workerGeneration) {
-        await worker.dispose().catch(() => {})
+      if (
+        this.disposed ||
+        generation !== this.workerGeneration ||
+        session !== this.workerSession
+      ) {
+        await worker.dispose().catch((error) => {
+          this.logIgnoredFailure("stale_worker_dispose_failed", error)
+        })
         throw new ApplePlaybackError(this.disposed ? "disposed" : "worker_disconnected")
       }
       this.worker = worker
       return worker
     } finally {
       if (this.workerPromise === starting) this.workerPromise = undefined
+      if (!this.worker && this.workerSession === session) this.workerSession = undefined
     }
   }
 
-  private async startWorker(generation: number): Promise<PlaybackWorkerClient> {
+  private async startWorker(generation: number, session: object): Promise<PlaybackWorkerClient> {
     const createWorker = this.options.createWorkerClient ?? createProcessPlaybackWorkerClient
     let worker: PlaybackWorkerClient | undefined
     try {
@@ -325,13 +391,17 @@ export class ApplePlaybackController implements PlaybackController<AppleCatalogT
       if (issued.mode !== "apple") throw new ApplePlaybackError("token_service_unavailable")
       worker = createWorker(
         (snapshot) => {
-          if (generation === this.workerGeneration) this.handleWorkerSnapshot(snapshot)
+          if (generation === this.workerGeneration && session === this.workerSession) {
+            this.handleWorkerSnapshot(snapshot)
+          }
         },
         (errorCode) => {
-          if (generation === this.workerGeneration) this.handleWorkerExit(worker, errorCode)
+          this.handleWorkerExit(session, worker, errorCode)
         },
         (frame) => {
-          if (generation === this.workerGeneration) this.handleWorkerSpectrum(frame)
+          if (generation === this.workerGeneration && session === this.workerSession) {
+            this.handleWorkerSpectrum(frame)
+          }
         },
       )
       await this.options.useMusicUserToken((musicUserToken) =>
@@ -347,7 +417,9 @@ export class ApplePlaybackController implements PlaybackController<AppleCatalogT
       if (!this.analysisEnabled) await worker.setAudioAnalysisEnabled(false)
       return worker
     } catch (error) {
-      await worker?.dispose().catch(() => {})
+      await worker?.dispose().catch((disposeError) => {
+        this.logIgnoredFailure("failed_worker_dispose_failed", disposeError)
+      })
       if (generation === this.workerGeneration) this.setError(playbackErrorCode(error))
       throw error
     }
@@ -370,6 +442,11 @@ export class ApplePlaybackController implements PlaybackController<AppleCatalogT
         repeatMode: snapshot.repeatMode,
         canSetShuffleMode: snapshot.canSetShuffleMode,
         canSetRepeatMode: snapshot.canSetRepeatMode,
+        source: null,
+        dynamicQueue: false,
+        canSeek: false,
+        canSkipNext: false,
+        canSkipPrevious: false,
       })
       return
     }
@@ -378,8 +455,20 @@ export class ApplePlaybackController implements PlaybackController<AppleCatalogT
     const tracksByResourceId = new Map(
       tracks?.map((track) => [track.apple.playParams!.id, track]) ?? [],
     )
+    const metadataByResourceId = new Map(
+      snapshot.queueItems.map((item) => [item.resourceId, item]),
+    )
+    if (snapshot.currentItem) {
+      metadataByResourceId.set(snapshot.currentItem.resourceId, snapshot.currentItem)
+    }
+    const station = this.stations.get(snapshot.loadId)
+    const resolveTrack = (resourceId: string): AppleCatalogTrack =>
+      tracksByResourceId.get(resourceId) ??
+      (station
+        ? generatedStationTrack(resourceId, metadataByResourceId.get(resourceId), station)
+        : generatedFiniteQueueTrack(resourceId, metadataByResourceId.get(resourceId)))
     const orderedTracks = snapshot.queueResourceIds.flatMap((resourceId) => {
-      const track = tracksByResourceId.get(resourceId)
+      const track = resolveTrack(resourceId)
       return track ? [track] : []
     })
     const currentIndex = snapshot.queuePosition >= 0 &&
@@ -388,7 +477,8 @@ export class ApplePlaybackController implements PlaybackController<AppleCatalogT
       : orderedTracks.findIndex(
           (track) => track.apple.playParams?.id === snapshot.resourceId,
         )
-    const catalogTrack = orderedTracks[currentIndex]
+    const catalogTrack = orderedTracks[currentIndex] ??
+      (snapshot.resourceId ? resolveTrack(snapshot.resourceId) : undefined)
     if (!catalogTrack) return
     this.activeLoadId = snapshot.loadId
     this.activeQueuePosition = currentIndex
@@ -406,6 +496,18 @@ export class ApplePlaybackController implements PlaybackController<AppleCatalogT
       repeatMode: snapshot.repeatMode,
       canSetShuffleMode: snapshot.canSetShuffleMode,
       canSetRepeatMode: snapshot.canSetRepeatMode,
+      source: snapshot.source?.type === "station"
+        ? {
+            type: "station",
+            id: snapshot.source.stationId,
+            title: snapshot.source.title,
+            isLive: snapshot.source.isLive,
+          }
+        : { type: "finite" },
+      dynamicQueue: snapshot.dynamicQueue,
+      canSeek: snapshot.canSeek,
+      canSkipNext: snapshot.canSkipNext,
+      canSkipPrevious: snapshot.canSkipPrevious,
     })
   }
 
@@ -427,12 +529,17 @@ export class ApplePlaybackController implements PlaybackController<AppleCatalogT
   }
 
   private handleWorkerExit(
+    session: object,
     worker: PlaybackWorkerClient | undefined,
     errorCode: string,
   ): void {
+    if (session !== this.workerSession) return
+    this.workerGeneration++
+    this.workerSession = undefined
     if (this.worker === worker) this.worker = undefined
     if (this.disposed) return
     this.queues.clear()
+    this.stations.clear()
     this.activeLoadId = null
     this.activeQueuePosition = -1
     this.setAnalysis(null)
@@ -440,9 +547,7 @@ export class ApplePlaybackController implements PlaybackController<AppleCatalogT
   }
 
   private hasPreviousTrack(): boolean {
-    return this.activeLoadId !== null && (
-      this.activeQueuePosition > 0 || this.currentSnapshot.repeatMode !== "none"
-    )
+    return this.activeLoadId !== null && this.currentSnapshot.canSkipPrevious === true
   }
 
   private async runControl(
@@ -451,8 +556,11 @@ export class ApplePlaybackController implements PlaybackController<AppleCatalogT
     const generation = this.workerGeneration
     try {
       await control(await this.getWorker())
+      this.assertWorkerGeneration(generation)
     } catch (error) {
-      if (generation === this.workerGeneration) this.setError(playbackErrorCode(error))
+      const code = playbackErrorCode(error)
+      this.logger.log("playback_control_failed", { code })
+      if (generation === this.workerGeneration) this.setError(code)
       throw error
     }
   }
@@ -476,7 +584,9 @@ export class ApplePlaybackController implements PlaybackController<AppleCatalogT
     for (const listener of this.listeners) {
       try {
         listener(snapshot)
-      } catch {}
+      } catch (error) {
+        this.logIgnoredFailure("snapshot_listener_failed", error)
+      }
     }
   }
 
@@ -487,7 +597,9 @@ export class ApplePlaybackController implements PlaybackController<AppleCatalogT
     this.analysisListeners.add(listener)
     try {
       listener(this.currentAnalysis)
-    } catch {}
+    } catch (error) {
+      this.logIgnoredFailure("analysis_listener_failed", error)
+    }
     return () => this.analysisListeners.delete(listener)
   }
 
@@ -524,233 +636,26 @@ export class ApplePlaybackController implements PlaybackController<AppleCatalogT
     for (const listener of this.analysisListeners) {
       try {
         listener(frame)
-      } catch {}
+      } catch (error) {
+        this.logIgnoredFailure("analysis_listener_failed", error)
+      }
     }
+  }
+
+  private logIgnoredFailure(event: string, error: unknown): void {
+    this.logger.log(event, { code: playbackErrorCode(error) })
   }
 
   private assertUsable(): void {
     if (this.disposed) throw new ApplePlaybackError("disposed")
     if (!this.authorizationEnabled) throw new ApplePlaybackError("authorization_invalid")
   }
-}
 
-class ProcessPlaybackWorkerClient implements PlaybackWorkerClient {
-  private readonly child: PlaybackWorkerProcess
-  private readonly pending = new Map<number, {
-    resolve: () => void
-    reject: (error: unknown) => void
-    timer: ReturnType<typeof setTimeout>
-  }>()
-  private nextRequestId = 1
-  private failed = false
-  private disposing = false
-  private disposePromise?: Promise<void>
-
-  constructor(
-    private readonly onSnapshot: (
-      snapshot: Extract<PlaybackWorkerResponse, { type: "snapshot" }>,
-    ) => void,
-    private readonly onExit: (errorCode: string) => void,
-    private readonly onSpectrum: (
-      frame: Extract<PlaybackWorkerResponse, { type: "spectrum" }>,
-    ) => void,
-  ) {
-    this.child = spawnPlaybackWorker()
-    void this.readResponses()
-    void this.child.exited.then((exitCode) => {
-      if (!this.disposing) this.fail(exitCode === 0 ? "worker_exited" : "worker_crashed")
-    })
-  }
-
-  initialize(options: PlaybackWorkerInitialization): Promise<void> {
-    return this.request({ type: "initialize", ...options }, INITIALIZE_TIMEOUT_MS)
-  }
-
-  setAudioAnalysisEnabled(enabled: boolean): Promise<void> {
-    return this.request({ type: "set-audio-analysis-enabled", enabled }, CONTROL_TIMEOUT_MS)
-  }
-
-  play(loadId: number, tracks: readonly PlaybackWorkerTrack[]): Promise<void> {
-    return this.request({ type: "play", loadId, tracks }, PLAY_TIMEOUT_MS)
-  }
-
-  pause(): Promise<void> {
-    return this.request({ type: "pause" }, CONTROL_TIMEOUT_MS)
-  }
-
-  resume(): Promise<void> {
-    return this.request({ type: "resume" }, CONTROL_TIMEOUT_MS)
-  }
-
-  previous(): Promise<void> {
-    return this.request({ type: "previous" }, CONTROL_TIMEOUT_MS)
-  }
-
-  next(): Promise<void> {
-    return this.request({ type: "next" }, CONTROL_TIMEOUT_MS)
-  }
-
-  setShuffleMode(mode: PlaybackShuffleMode): Promise<void> {
-    return this.request({ type: "set-shuffle-mode", mode }, CONTROL_TIMEOUT_MS)
-  }
-
-  setRepeatMode(mode: PlaybackRepeatMode): Promise<void> {
-    return this.request({ type: "set-repeat-mode", mode }, CONTROL_TIMEOUT_MS)
-  }
-
-  seek(positionSeconds: number): Promise<void> {
-    return this.request({ type: "seek", positionSeconds }, CONTROL_TIMEOUT_MS)
-  }
-
-  stop(): Promise<void> {
-    return this.request({ type: "stop" }, CONTROL_TIMEOUT_MS)
-  }
-
-  dispose(): Promise<void> {
-    this.disposePromise ??= this.runDispose()
-    return this.disposePromise
-  }
-
-  private async runDispose(): Promise<void> {
-    this.disposing = true
-    let acknowledged = false
-    try {
-      if (!this.failed) {
-        await this.request({ type: "shutdown" }, SHUTDOWN_TIMEOUT_MS)
-        acknowledged = true
-      }
-    } catch {
-    } finally {
-      this.child.stdin.end()
-      if (!acknowledged || !(await exitsWithin(this.child, SHUTDOWN_TIMEOUT_MS))) {
-        this.child.kill(9)
-        await exitsWithin(this.child, SHUTDOWN_TIMEOUT_MS)
-      }
-      this.rejectPending("worker_disposed")
+  private assertWorkerGeneration(generation: number): void {
+    if (generation !== this.workerGeneration) {
+      throw new ApplePlaybackError("worker_disconnected")
     }
   }
-
-  private request(
-    request: Record<string, unknown>,
-    timeoutMs: number,
-  ): Promise<void> {
-    if (this.failed) return Promise.reject(new ApplePlaybackError("worker_unavailable"))
-    const requestId = this.nextRequestId++
-    const encoded = encodePlaybackMessage({ ...request, requestId })
-    if (Buffer.byteLength(encoded, "utf8") > MAX_PLAYBACK_MESSAGE_BYTES) {
-      return Promise.reject(new ApplePlaybackError("queue_too_large"))
-    }
-    return new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(requestId)
-        reject(new ApplePlaybackError("worker_timeout"))
-        this.fail("worker_timeout")
-      }, timeoutMs)
-      this.pending.set(requestId, { resolve, reject, timer })
-      try {
-        this.child.stdin.write(encoded)
-        this.child.stdin.flush()
-      } catch {
-        clearTimeout(timer)
-        this.pending.delete(requestId)
-        reject(new ApplePlaybackError("worker_unavailable"))
-        this.fail("worker_unavailable")
-      }
-    })
-  }
-
-  private async readResponses(): Promise<void> {
-    const decoder = new TextDecoder("utf-8", { fatal: true })
-    let buffer = ""
-    try {
-      for await (const chunk of this.child.stdout) {
-        buffer += decoder.decode(chunk, { stream: true })
-        if (Buffer.byteLength(buffer, "utf8") > MAX_PLAYBACK_MESSAGE_BYTES && !buffer.includes("\n")) {
-          throw new Error("message_too_large")
-        }
-        let newline = buffer.indexOf("\n")
-        while (newline >= 0) {
-          const line = buffer.slice(0, newline)
-          buffer = buffer.slice(newline + 1)
-          if (line) this.handleResponse(line)
-          newline = buffer.indexOf("\n")
-        }
-      }
-      if (buffer.trim()) throw new Error("incomplete_message")
-    } catch {
-      this.fail("worker_protocol_error")
-    }
-  }
-
-  private handleResponse(line: string): void {
-    const response = decodePlaybackWorkerResponse(line)
-    if (!response) {
-      this.fail("worker_protocol_error")
-      return
-    }
-    if (response.type === "snapshot") {
-      this.onSnapshot(response)
-      return
-    }
-    if (response.type === "spectrum") {
-      this.onSpectrum(response)
-      return
-    }
-    const pending = this.pending.get(response.requestId)
-    if (!pending) return
-    clearTimeout(pending.timer)
-    this.pending.delete(response.requestId)
-    if (response.ok) pending.resolve()
-    else pending.reject(new ApplePlaybackError(response.errorCode ?? "control_failed"))
-  }
-
-  private fail(errorCode: string): void {
-    if (this.failed || this.disposing) return
-    this.failed = true
-    this.child.kill()
-    void exitsWithin(this.child, SHUTDOWN_TIMEOUT_MS).then((exited) => {
-      if (!exited) this.child.kill(9)
-    })
-    this.rejectPending(errorCode)
-    this.onExit(errorCode)
-  }
-
-  private rejectPending(errorCode: string): void {
-    for (const pending of this.pending.values()) {
-      clearTimeout(pending.timer)
-      pending.reject(new ApplePlaybackError(errorCode))
-    }
-    this.pending.clear()
-  }
-}
-
-interface PlaybackWorkerProcess {
-  stdin: {
-    write(value: string): number
-    flush(): number | Promise<number>
-    end(): void
-  }
-  stdout: ReadableStream<Uint8Array>
-  exited: Promise<number>
-  kill(signal?: number | string): void
-}
-
-function createProcessPlaybackWorkerClient(
-  onSnapshot: (snapshot: Extract<PlaybackWorkerResponse, { type: "snapshot" }>) => void,
-  onExit: (errorCode: string) => void,
-  onSpectrum: (frame: Extract<PlaybackWorkerResponse, { type: "spectrum" }>) => void,
-): PlaybackWorkerClient {
-  return new ProcessPlaybackWorkerClient(onSnapshot, onExit, onSpectrum)
-}
-
-function spawnPlaybackWorker(): PlaybackWorkerProcess {
-  return Bun.spawn({
-    cmd: [process.execPath, "run", join(import.meta.dir, "apple-playback-worker.ts")],
-    env: playbackBrowserEnvironment(process.env),
-    stdin: "pipe",
-    stdout: "pipe",
-    stderr: "ignore",
-  }) as unknown as PlaybackWorkerProcess
 }
 
 function playableQueue(
@@ -764,7 +669,7 @@ function playableQueue(
     if (!isPlayableTrack(upcoming) || seen.has(upcoming.apple.playParams.id)) continue
     seen.add(upcoming.apple.playParams.id)
     queue.push(upcoming)
-    if (queue.length === 100) break
+    if (queue.length === MAX_PLAYBACK_QUEUE_ITEMS) break
   }
   return queue
 }
@@ -779,16 +684,54 @@ function isPlayableTrack(
   )
 }
 
-function playbackErrorCode(error: unknown): string {
-  return error instanceof ApplePlaybackError ? error.code : "control_failed"
+function isPlayableStation(station: Station): station is AppleCatalogStation {
+  if (!("apple" in station)) return false
+  const apple = (station as AppleCatalogStation).apple
+  return apple.resourceType === "stations" &&
+    (!apple.playParams || (
+      apple.playParams.kind === "radioStation" &&
+      apple.playParams.id === apple.resourceId
+    ))
 }
 
-async function exitsWithin(
-  child: PlaybackWorkerProcess,
-  timeoutMs: number,
-): Promise<boolean> {
-  return Promise.race([
-    child.exited.then(() => true, () => true),
-    Bun.sleep(timeoutMs).then(() => false),
-  ])
+function generatedStationTrack(
+  resourceId: string,
+  item: PlaybackWorkerItem | undefined,
+  station: AppleCatalogStation,
+): AppleCatalogTrack {
+  const title = item?.title || station.title || "Apple Music Station"
+  return {
+    id: `apple:song:${resourceId}`,
+    title,
+    artist: item?.artist || "Apple Music",
+    album: item?.album || station.title || "Apple Music Station",
+    durationSeconds: item?.durationSeconds ?? 0,
+    apple: {
+      resourceId,
+      resourceType: "songs",
+      playParams: { id: resourceId, kind: "song" },
+    },
+  }
+}
+
+function generatedFiniteQueueTrack(
+  resourceId: string,
+  item: PlaybackWorkerItem | undefined,
+): AppleCatalogTrack {
+  return {
+    id: `apple:song:${resourceId}`,
+    title: item?.title || "Apple Music Track",
+    artist: item?.artist || "Apple Music",
+    album: item?.album || "Apple Music",
+    durationSeconds: item?.durationSeconds ?? 0,
+    apple: {
+      resourceId,
+      resourceType: "songs",
+      playParams: { id: resourceId, kind: "song" },
+    },
+  }
+}
+
+function playbackErrorCode(error: unknown): string {
+  return error instanceof ApplePlaybackError ? error.code : "control_failed"
 }

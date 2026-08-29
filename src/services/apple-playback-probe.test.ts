@@ -3,11 +3,41 @@ import { describe, expect, test } from "bun:test"
 import type { AppleCatalogTrack } from "../core/types"
 import {
   ApplePlaybackProbeError,
+  readBoundedProcessOutput,
   runApplePlaybackProbe,
   type PlaybackProbeBrowser,
   type PlaybackProbeControl,
   type PlaybackProbeSnapshot,
 } from "./apple-playback-probe"
+
+test("bounds and times out subprocess output", async () => {
+  let oversizedKills = 0
+  const oversized = await readBoundedProcessOutput({
+    stdout: new ReadableStream({
+      start(controller) {
+        controller.enqueue(new Uint8Array(9))
+        controller.close()
+      },
+    }),
+    exited: Promise.resolve(0),
+    kill: () => oversizedKills++,
+  }, 8, 100)
+  expect(oversized).toBeNull()
+  expect(oversizedKills).toBeGreaterThan(0)
+
+  let timeoutKills = 0
+  const started = performance.now()
+  const timedOut = await readBoundedProcessOutput({
+    stdout: new ReadableStream({
+      pull: () => new Promise<void>(() => {}),
+    }),
+    exited: new Promise<number>(() => {}),
+    kill: () => timeoutKills++,
+  }, 8, 10)
+  expect(timedOut).toBeNull()
+  expect(timeoutKills).toBe(1)
+  expect(performance.now() - started).toBeLessThan(500)
+})
 
 const track: AppleCatalogTrack = {
   id: "apple:song:12345",
@@ -43,6 +73,10 @@ class FakeProbeBrowser implements PlaybackProbeBrowser {
 
   async setQueue(resourceIds: readonly string[]): Promise<void> {
     this.resourceId = resourceIds[0] ?? null
+  }
+
+  async setStation(resourceId: string): Promise<void> {
+    this.resourceId = resourceId
   }
 
   async setShuffleMode(): Promise<void> {}

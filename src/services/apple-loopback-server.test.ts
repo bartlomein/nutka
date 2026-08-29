@@ -162,7 +162,7 @@ describe("Apple loopback request handler", () => {
     const scriptResponse = await handle(new Request(`${origin}/playback.js`))
     const script = await scriptResponse.text()
     expect(script).toContain("window.__nutkaPlayback")
-    expect(script).toContain("music.setQueue(songResourceIds.length === 1")
+    expect(script).toContain("music.setQueue(resourceIds.length === 1")
     expect(script).toContain("music.skipToPreviousItem()")
     expect(script).toContain("music.skipToNextItem()")
     expect(script).toContain("music.shuffleMode = MusicKit.PlayerShuffleMode.songs")

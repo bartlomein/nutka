@@ -1,43 +1,68 @@
 import type {
-  AppleAlbumDetails,
-  AppleArtistDetails,
   AppleArtistSectionName,
   AppleArtistSectionPage,
-  AppleArtwork,
   AppleCatalogAlbum,
   AppleCatalogAlbumSummary,
   AppleCatalogArtist,
   AppleCatalogPlaylist,
+  AppleCatalogStation,
+  AppleCatalogStationGenre,
   AppleCatalogTrack,
-  AppleAudioTrait,
-  AppleContentRating,
   AppleHomeSection,
   AppleLibraryPlaylist,
   ApplePlaylist,
-  ApplePlaylistDetails,
+  ApplePersonalRating,
+  ApplePersonalRatingResourceType,
   ApplePersonalSongRating,
+  ApplePersonalStationRating,
   AppleSongContext,
-  AppleTrackDetails,
-  AudioQuality,
   MusicProvider,
   SearchOptions,
   SearchPage,
 } from "../core/types"
+import { isResourceId } from "./apple-catalog-decode-helpers"
+import { AppleCatalogError, type AppleCatalogErrorCode } from "./apple-catalog-error"
 import {
-  requestDeveloperToken,
-  runWithAbortTimeout,
-  type Fetch,
-} from "./token-service"
+  decodeCatalogCollection as decodeCollection,
+  decodePersonalRating,
+  decodeCatalogSearchResponse,
+  requireCatalogCollection as requireCollection,
+  validateCatalogQuery,
+} from "./apple-catalog-decoders"
+import { decodeHomeSections } from "./apple-catalog-home-decoders"
+import {
+  decodeAlbum,
+  decodeAlbumSummary,
+  decodeArtist,
+  decodeArtistSectionPage,
+  decodeCatalogTracks,
+  decodeRelationshipId,
+  decodeSingleResource,
+  decodeSong,
+} from "./apple-catalog-media-decoders"
+import {
+  APPLE_API_ORIGIN,
+  AppleCatalogPagination,
+  collectionUrl,
+  filteredCollectionUrl,
+} from "./apple-catalog-pagination"
+import {
+  decodeCatalogPlaylist,
+  decodeLibraryPlaylist,
+  decodePlaylistTracks,
+} from "./apple-catalog-playlist-decoders"
+import {
+  decodeSingleStation,
+  decodeStation,
+  decodeStationGenre,
+  decodeStationPage,
+} from "./apple-catalog-station-decoders"
+import { AppleCatalogTransport } from "./apple-catalog-transport"
+import type { PlaybackLogger } from "./playback-log"
+import type { Fetch } from "./token-service"
 
-const APPLE_API_ORIGIN = "https://api.music.apple.com"
 const DEFAULT_LIMIT = 25
 const MAX_LIMIT = 25
-const MAX_QUERY_LENGTH = 200
-const MAX_CURSOR_LENGTH = 8 * 1024
-const MAX_RESPONSE_BYTES = 512 * 1024
-const MAX_AUDIO_TRAITS = 16
-const MAX_GENRES = 24
-const MAX_RELATIONSHIP_PAGES = 50
 
 const artistSectionNames = new Set<AppleArtistSectionName>([
   "top-songs",
@@ -47,36 +72,8 @@ const artistSectionNames = new Set<AppleArtistSectionName>([
   "similar-artists",
 ])
 
-const knownAudioTraits = new Set<AppleAudioTrait>([
-  "atmos",
-  "dolby-atmos",
-  "dolby-audio",
-  "hi-res-lossless",
-  "lossless",
-  "lossy-stereo",
-  "spatial",
-])
-
-export type AppleCatalogErrorCode =
-  | "invalid_request"
-  | "unavailable"
-  | "invalid_response"
-  | "aborted"
-  | "timeout"
-
-export class AppleCatalogError extends Error {
-  constructor(readonly code: AppleCatalogErrorCode) {
-    const messages: Record<AppleCatalogErrorCode, string> = {
-      invalid_request: "Apple catalog request is invalid",
-      unavailable: "Apple catalog is unavailable",
-      invalid_response: "Apple catalog returned an invalid response",
-      aborted: "Apple catalog search was aborted",
-      timeout: "Apple catalog search timed out",
-    }
-    super(messages[code])
-    this.name = "AppleCatalogError"
-  }
-}
+export { AppleCatalogError }
+export type { AppleCatalogErrorCode }
 
 export interface AppleCatalogProviderOptions {
   fetch?: Fetch
@@ -85,17 +82,19 @@ export interface AppleCatalogProviderOptions {
   useMusicUserToken?: <T>(
     use: (musicUserToken: string) => T | Promise<T>,
   ) => Promise<T>
+  logger?: PlaybackLogger
 }
 
 export class AppleCatalogProvider implements MusicProvider<AppleCatalogTrack> {
   readonly id = "apple"
   readonly displayName = "Apple Music"
 
-  private readonly fetchImpl: Fetch
-  private readonly timeoutMs: number | undefined
   private readonly limit: number
   private readonly searchPath: string
   private readonly useMusicUserToken: AppleCatalogProviderOptions["useMusicUserToken"]
+  private readonly transport: AppleCatalogTransport
+  private readonly pagination: AppleCatalogPagination
+  private readonly logger: PlaybackLogger
 
   constructor(
     private readonly serviceUrl: string,
@@ -114,58 +113,54 @@ export class AppleCatalogProvider implements MusicProvider<AppleCatalogTrack> {
       throw new AppleCatalogError("invalid_request")
     }
 
-    this.fetchImpl = options.fetch ?? fetch
-    this.timeoutMs = options.timeoutMs
     this.limit = Math.min(options.limit ?? DEFAULT_LIMIT, MAX_LIMIT)
     this.searchPath = `/v1/catalog/${storefront}/search`
     this.useMusicUserToken = options.useMusicUserToken
+    this.logger = options.logger ?? { log() {} }
+    this.transport = new AppleCatalogTransport(serviceUrl, {
+      fetch: options.fetch ?? fetch,
+      ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+      ...(this.useMusicUserToken === undefined ? {} : {
+        useMusicUserToken: this.useMusicUserToken,
+      }),
+    })
+    this.pagination = new AppleCatalogPagination(this.searchPath, this.limit)
   }
 
   async searchSongs(
     query: string,
     options: SearchOptions = {},
   ): Promise<SearchPage<AppleCatalogTrack>> {
-    const term = validateQuery(query)
+    const term = validateCatalogQuery(query)
     const url = options.cursor
-      ? this.validateCursor(options.cursor, this.searchPath)
-      : this.buildSearchUrl(term)
+      ? this.validateSearchCursor(options.cursor, "songs", term)
+      : this.buildSearchUrl(term, "songs")
 
-    try {
-      return await runWithAbortTimeout(
-        async (signal) => {
-          const developer = await requestDeveloperToken(
-            this.serviceUrl,
-            this.fetchImpl,
-            { signal, timeoutMs: this.timeoutMs },
-          )
-          if (developer.mode !== "apple") {
-            throw new AppleCatalogError("unavailable")
-          }
+    return this.requestCatalog(options, async (developerToken, signal) =>
+      this.decodeSearchResponse(
+        await this.requestAppleJson(url, developerToken, signal),
+        "songs",
+        term,
+        decodeSong,
+      ))
+  }
 
-          const response = await this.fetchImpl(url, {
-            method: "GET",
-            headers: {
-              accept: "application/json",
-              authorization: `Bearer ${developer.token}`,
-            },
-            redirect: "manual",
-            signal,
-          })
-          if (!response.ok) throw new AppleCatalogError("unavailable")
-          return this.decodeResponse(await readBoundedJson(response))
-        },
-        { signal: options.signal, timeoutMs: this.timeoutMs },
-      )
-    } catch (error) {
-      if (error instanceof AppleCatalogError) throw error
-      if (error instanceof Error && error.message === "Operation aborted") {
-        throw new AppleCatalogError("aborted")
-      }
-      if (error instanceof Error && error.message === "Operation timed out") {
-        throw new AppleCatalogError("timeout")
-      }
-      throw new AppleCatalogError("unavailable")
-    }
+  async searchStations(
+    query: string,
+    options: SearchOptions = {},
+  ): Promise<SearchPage<AppleCatalogStation>> {
+    const term = validateCatalogQuery(query)
+    const url = options.cursor
+      ? this.validateSearchCursor(options.cursor, "stations", term)
+      : this.buildSearchUrl(term, "stations")
+
+    return this.requestCatalog(options, async (developerToken, signal) =>
+      this.decodeSearchResponse(
+        await this.requestAppleJson(url, developerToken, signal),
+        "stations",
+        term,
+        decodeStation,
+      ))
   }
 
   async getAlbumForSong(
@@ -176,44 +171,20 @@ export class AppleCatalogProvider implements MusicProvider<AppleCatalogTrack> {
       throw new AppleCatalogError("invalid_request")
     }
 
-    try {
-      return await runWithAbortTimeout(
-        async (signal) => {
-          const developer = await requestDeveloperToken(
-            this.serviceUrl,
-            this.fetchImpl,
-            { signal, timeoutMs: this.timeoutMs },
-          )
-          if (developer.mode !== "apple") {
-            throw new AppleCatalogError("unavailable")
-          }
-
-          const songUrl = new URL(
-            `/v1/catalog/${this.storefront}/songs/${songResourceId}`,
-            APPLE_API_ORIGIN,
-          )
-          songUrl.searchParams.set("include", "albums")
-          const song = decodeSingleResource(
-            await this.requestAppleJson(songUrl, developer.token, signal),
-            "songs",
-          )
-          const albumId = decodeRelationshipId(song, "albums", "albums")
-          if (!albumId) throw new AppleCatalogError("invalid_response")
-
-          return this.requestAlbum(albumId, developer.token, signal)
-        },
-        { signal: options.signal, timeoutMs: this.timeoutMs },
+    return this.requestCatalog(options, async (developerToken, signal) => {
+      const songUrl = new URL(
+        `/v1/catalog/${this.storefront}/songs/${songResourceId}`,
+        APPLE_API_ORIGIN,
       )
-    } catch (error) {
-      if (error instanceof AppleCatalogError) throw error
-      if (error instanceof Error && error.message === "Operation aborted") {
-        throw new AppleCatalogError("aborted")
-      }
-      if (error instanceof Error && error.message === "Operation timed out") {
-        throw new AppleCatalogError("timeout")
-      }
-      throw new AppleCatalogError("unavailable")
-    }
+      songUrl.searchParams.set("include", "albums")
+      const song = decodeSingleResource(
+        await this.requestAppleJson(songUrl, developerToken, signal),
+        "songs",
+      )
+      const albumId = decodeRelationshipId(song, "albums", "albums")
+      if (!albumId) throw new AppleCatalogError("invalid_response")
+      return this.requestAlbum(albumId, developerToken, signal)
+    })
   }
 
   async getSongContext(
@@ -313,12 +284,145 @@ export class AppleCatalogProvider implements MusicProvider<AppleCatalogTrack> {
     )
   }
 
+  async getLiveRadioStations(
+    options: Pick<SearchOptions, "signal"> = {},
+  ): Promise<SearchPage<AppleCatalogStation>> {
+    const path = `/v1/catalog/${this.storefront}/stations`
+    const url = filteredCollectionUrl(
+      path,
+      "filter[featured]",
+      "apple-music-live-radio",
+    )
+    return this.requestPage(url, path, options, false, decodeStationPage)
+  }
+
+  async getStationsByIds(
+    stationResourceIds: readonly string[],
+    options: Pick<SearchOptions, "signal"> = {},
+  ): Promise<readonly AppleCatalogStation[]> {
+    if (
+      !Array.isArray(stationResourceIds) ||
+      stationResourceIds.length < 1 ||
+      stationResourceIds.length > MAX_LIMIT ||
+      stationResourceIds.some((id) => !isResourceId(id)) ||
+      new Set(stationResourceIds).size !== stationResourceIds.length
+    ) {
+      throw new AppleCatalogError("invalid_request")
+    }
+    const request = async (
+      developerToken: string,
+      signal: AbortSignal,
+      musicUserToken?: string,
+    ) => {
+      const url = new URL(`/v1/catalog/${this.storefront}/stations`, APPLE_API_ORIGIN)
+      url.searchParams.set("ids", stationResourceIds.join(","))
+      const stations = decodeCollection(
+        await this.requestAppleJson(url, developerToken, signal, musicUserToken),
+        decodeStation,
+      )
+      const byId = new Map<string, AppleCatalogStation>()
+      for (const station of stations) {
+        const id = station.apple.resourceId
+        if (!stationResourceIds.includes(id) || byId.has(id)) {
+          throw new AppleCatalogError("invalid_response")
+        }
+        byId.set(id, station)
+      }
+      return stationResourceIds.flatMap((id) => {
+        const station = byId.get(id)
+        return station ? [station] : []
+      })
+    }
+    return this.useMusicUserToken
+      ? this.requestPersonalized(options, (developerToken, musicUserToken, signal) =>
+          request(developerToken, signal, musicUserToken)
+        )
+      : this.requestCatalog(options, (developerToken, signal) =>
+          request(developerToken, signal)
+        )
+  }
+
+  async getStationGenres(
+    options: Pick<SearchOptions, "signal"> = {},
+  ): Promise<readonly AppleCatalogStationGenre[]> {
+    const path = `/v1/catalog/${this.storefront}/station-genres`
+    return this.requestCatalog(options, async (developerToken, signal) =>
+      decodeCollection(
+        await this.requestAppleJson(new URL(path, APPLE_API_ORIGIN), developerToken, signal),
+        decodeStationGenre,
+      )
+    )
+  }
+
+  async getStationsForGenre(
+    stationGenreResourceId: string,
+    options: SearchOptions = {},
+  ): Promise<SearchPage<AppleCatalogStation>> {
+    if (!isResourceId(stationGenreResourceId)) {
+      throw new AppleCatalogError("invalid_request")
+    }
+    const path =
+      `/v1/catalog/${this.storefront}/station-genres/${stationGenreResourceId}/stations`
+    const url = options.cursor
+      ? this.validateCursor(options.cursor, path)
+      : collectionUrl(path, this.limit)
+    return this.requestPage(url, path, options, false, decodeStationPage)
+  }
+
+  async getPersonalStation(
+    options: Pick<SearchOptions, "signal"> = {},
+  ): Promise<AppleCatalogStation> {
+    const path = `/v1/catalog/${this.storefront}/stations`
+    const url = filteredCollectionUrl(path, "filter[identity]", "personal")
+    return this.requestPersonalized(options, async (developerToken, musicUserToken, signal) => {
+      return decodeSingleStation(
+        await this.requestAppleJson(url, developerToken, signal, musicUserToken),
+      )
+    })
+  }
+
+  async getRecentlyPlayedStations(
+    options: SearchOptions = {},
+  ): Promise<SearchPage<AppleCatalogStation>> {
+    const path = "/v1/me/recent/radio-stations"
+    const url = options.cursor
+      ? this.validateCursor(options.cursor, path)
+      : collectionUrl(path, this.limit)
+    return this.requestPage(url, path, options, true, decodeStationPage)
+  }
+
+  async getStationForResource(
+    resourceType: "songs" | "artists",
+    resourceId: string,
+    options: Pick<SearchOptions, "signal"> = {},
+  ): Promise<AppleCatalogStation> {
+    if (
+      (resourceType !== "songs" && resourceType !== "artists") ||
+      !isResourceId(resourceId)
+    ) {
+      throw new AppleCatalogError("invalid_request")
+    }
+    return this.requestCatalog(options, async (developerToken, signal) => {
+      const url = new URL(
+        `/v1/catalog/${this.storefront}/${resourceType}/${resourceId}/station`,
+        APPLE_API_ORIGIN,
+      )
+      return decodeSingleStation(
+        await this.requestAppleJson(url, developerToken, signal),
+      )
+    })
+  }
+
   async getRecommendedPlaylists(
     options: SearchOptions = {},
   ): Promise<SearchPage<AppleCatalogPlaylist>> {
     const page = await this.getHomeSections(options)
     return {
-      items: page.items.flatMap((section) => section.items),
+      items: page.items.flatMap((section) =>
+        section.items.filter((item): item is AppleCatalogPlaylist =>
+          item.apple.resourceType === "playlists"
+        )
+      ),
       nextCursor: page.nextCursor,
     }
   }
@@ -380,23 +484,7 @@ export class AppleCatalogProvider implements MusicProvider<AppleCatalogTrack> {
     songResourceId: string,
     options: Pick<SearchOptions, "signal"> = {},
   ): Promise<ApplePersonalSongRating | null> {
-    if (!isResourceId(songResourceId)) {
-      throw new AppleCatalogError("invalid_request")
-    }
-    return this.requestPersonalized(options, async (developerToken, musicUserToken, signal) => {
-      const response = await this.fetchImpl(
-        new URL(`/v1/me/ratings/songs/${songResourceId}`, APPLE_API_ORIGIN),
-        {
-          method: "GET",
-          headers: personalizedHeaders(developerToken, musicUserToken),
-          redirect: "manual",
-          signal,
-        },
-      )
-      if (response.status === 404) return null
-      if (!response.ok) throw new AppleCatalogError("unavailable")
-      return decodePersonalSongRating(await readBoundedJson(response))
-    })
+    return this.getPersonalRating("songs", songResourceId, options)
   }
 
   async setPersonalSongRating(
@@ -404,47 +492,90 @@ export class AppleCatalogProvider implements MusicProvider<AppleCatalogTrack> {
     rating: ApplePersonalSongRating,
     options: Pick<SearchOptions, "signal"> = {},
   ): Promise<void> {
-    if (!isResourceId(songResourceId) || (rating !== -1 && rating !== 1)) {
-      throw new AppleCatalogError("invalid_request")
-    }
-    return this.requestPersonalized(options, async (developerToken, musicUserToken, signal) => {
-      const response = await this.fetchImpl(
-        new URL(`/v1/me/ratings/songs/${songResourceId}`, APPLE_API_ORIGIN),
-        {
-          method: "PUT",
-          headers: {
-            ...personalizedHeaders(developerToken, musicUserToken),
-            "content-type": "application/json",
-          },
-          body: JSON.stringify({ type: "ratings", attributes: { value: rating } }),
-          redirect: "manual",
-          signal,
-        },
-      )
-      if (!response.ok) throw new AppleCatalogError("unavailable")
-    })
+    return this.setPersonalRating("songs", songResourceId, rating, options)
   }
 
   async deletePersonalSongRating(
     songResourceId: string,
     options: Pick<SearchOptions, "signal"> = {},
   ): Promise<void> {
-    if (!isResourceId(songResourceId)) {
+    return this.deletePersonalRating("songs", songResourceId, options)
+  }
+
+  async getPersonalStationRating(
+    stationResourceId: string,
+    options: Pick<SearchOptions, "signal"> = {},
+  ): Promise<ApplePersonalStationRating | null> {
+    return this.getPersonalRating("stations", stationResourceId, options)
+  }
+
+  async setPersonalStationRating(
+    stationResourceId: string,
+    rating: ApplePersonalStationRating,
+    options: Pick<SearchOptions, "signal"> = {},
+  ): Promise<void> {
+    return this.setPersonalRating("stations", stationResourceId, rating, options)
+  }
+
+  async deletePersonalStationRating(
+    stationResourceId: string,
+    options: Pick<SearchOptions, "signal"> = {},
+  ): Promise<void> {
+    return this.deletePersonalRating("stations", stationResourceId, options)
+  }
+
+  private async getPersonalRating(
+    resourceType: ApplePersonalRatingResourceType,
+    resourceId: string,
+    options: Pick<SearchOptions, "signal">,
+  ): Promise<ApplePersonalRating | null> {
+    if (!isResourceId(resourceId)) throw new AppleCatalogError("invalid_request")
+    return this.requestPersonalized(options, async (developerToken, musicUserToken, signal) => {
+      const value = await this.transport.requestOptionalJson(
+        new URL(`/v1/me/ratings/${resourceType}/${resourceId}`, APPLE_API_ORIGIN),
+        developerToken,
+        musicUserToken,
+        signal,
+      )
+      return value === null ? null : decodePersonalRating(value, resourceId)
+    })
+  }
+
+  private async setPersonalRating(
+    resourceType: ApplePersonalRatingResourceType,
+    resourceId: string,
+    rating: ApplePersonalRating,
+    options: Pick<SearchOptions, "signal">,
+  ): Promise<void> {
+    if (!isResourceId(resourceId) || (rating !== -1 && rating !== 1)) {
       throw new AppleCatalogError("invalid_request")
     }
     return this.requestPersonalized(options, async (developerToken, musicUserToken, signal) => {
-      const response = await this.fetchImpl(
-        new URL(`/v1/me/ratings/songs/${songResourceId}`, APPLE_API_ORIGIN),
-        {
-          method: "DELETE",
-          headers: personalizedHeaders(developerToken, musicUserToken),
-          redirect: "manual",
-          signal,
-        },
+      await this.transport.requestRatingUpdate(
+        new URL(`/v1/me/ratings/${resourceType}/${resourceId}`, APPLE_API_ORIGIN),
+        "PUT",
+        developerToken,
+        musicUserToken,
+        signal,
+        rating,
       )
-      if (!response.ok && response.status !== 404) {
-        throw new AppleCatalogError("unavailable")
-      }
+    })
+  }
+
+  private async deletePersonalRating(
+    resourceType: ApplePersonalRatingResourceType,
+    resourceId: string,
+    options: Pick<SearchOptions, "signal">,
+  ): Promise<void> {
+    if (!isResourceId(resourceId)) throw new AppleCatalogError("invalid_request")
+    return this.requestPersonalized(options, async (developerToken, musicUserToken, signal) => {
+      await this.transport.requestRatingUpdate(
+        new URL(`/v1/me/ratings/${resourceType}/${resourceId}`, APPLE_API_ORIGIN),
+        "DELETE",
+        developerToken,
+        musicUserToken,
+        signal,
+      )
     })
   }
 
@@ -453,29 +584,10 @@ export class AppleCatalogProvider implements MusicProvider<AppleCatalogTrack> {
     operation: (developerToken: string, signal: AbortSignal) => Promise<T>,
   ): Promise<T> {
     try {
-      return await runWithAbortTimeout(
-        async (signal) => {
-          const developer = await requestDeveloperToken(
-            this.serviceUrl,
-            this.fetchImpl,
-            { signal, timeoutMs: this.timeoutMs },
-          )
-          if (developer.mode !== "apple") {
-            throw new AppleCatalogError("unavailable")
-          }
-          return operation(developer.token, signal)
-        },
-        { signal: options.signal, timeoutMs: this.timeoutMs },
-      )
+      return await this.transport.requestCatalog(options, operation)
     } catch (error) {
-      if (error instanceof AppleCatalogError) throw error
-      if (error instanceof Error && error.message === "Operation aborted") {
-        throw new AppleCatalogError("aborted")
-      }
-      if (error instanceof Error && error.message === "Operation timed out") {
-        throw new AppleCatalogError("timeout")
-      }
-      throw new AppleCatalogError("unavailable")
+      this.logRequestFailure(error)
+      throw error
     }
   }
 
@@ -487,12 +599,12 @@ export class AppleCatalogProvider implements MusicProvider<AppleCatalogTrack> {
       signal: AbortSignal,
     ) => Promise<T>,
   ): Promise<T> {
-    return this.requestCatalog(options, async (developerToken, signal) => {
-      if (!this.useMusicUserToken) throw new AppleCatalogError("unavailable")
-      return this.useMusicUserToken((musicUserToken) =>
-        operation(developerToken, musicUserToken, signal)
-      )
-    })
+    try {
+      return await this.transport.requestPersonalized(options, operation)
+    } catch (error) {
+      this.logRequestFailure(error)
+      throw error
+    }
   }
 
   private async requestAlbum(
@@ -509,21 +621,14 @@ export class AppleCatalogProvider implements MusicProvider<AppleCatalogTrack> {
       "albums",
     )
     const album = decodeAlbum(resource)
-    let tracks = album.tracks
-    let next = this.decodeRelationshipNextCursor(resource, "tracks", tracksPath)
-    const cursors = new Set<string>()
-    for (let page = 0; next && page < MAX_RELATIONSHIP_PAGES; page++) {
-      if (cursors.has(next)) throw new AppleCatalogError("invalid_response")
-      cursors.add(next)
-      const value = await this.requestAppleJson(
-        new URL(next, APPLE_API_ORIGIN),
-        developerToken,
-        signal,
-      )
-      tracks = appendUniqueCatalogTracks(tracks, decodeCatalogTracks(value))
-      next = this.decodeNextCursor(value, tracksPath)
-    }
-    if (next) throw new AppleCatalogError("invalid_response")
+    const next = this.decodeRelationshipNextCursor(resource, "tracks", tracksPath)
+    const tracks = await this.pagination.collectPages({
+      initialItems: album.tracks,
+      initialUrl: next ? new URL(next, APPLE_API_ORIGIN) : null,
+      expectedPath: tracksPath,
+      request: (pageUrl) => this.requestAppleJson(pageUrl, developerToken, signal),
+      decode: decodeCatalogTracks,
+    })
     return { ...album, tracks }
   }
 
@@ -533,24 +638,12 @@ export class AppleCatalogProvider implements MusicProvider<AppleCatalogTrack> {
     signal: AbortSignal,
     decode: (value: unknown) => T | null,
   ): Promise<readonly T[]> {
-    let url = collectionUrl(path, Math.min(this.limit, 10))
-    const items: T[] = []
-    const ids = new Set<string>()
-    const cursors = new Set<string>()
-    for (let page = 0; page < MAX_RELATIONSHIP_PAGES; page++) {
-      const value = await this.requestAppleJson(url, developerToken, signal)
-      for (const item of decodeCollection(value, decode)) {
-        if (ids.has(item.id)) continue
-        ids.add(item.id)
-        items.push(item)
-      }
-      const next = this.decodeNextCursor(value, path)
-      if (!next) return items
-      if (cursors.has(next)) throw new AppleCatalogError("invalid_response")
-      cursors.add(next)
-      url = new URL(next, APPLE_API_ORIGIN)
-    }
-    throw new AppleCatalogError("invalid_response")
+    return this.pagination.collectPages({
+      initialUrl: collectionUrl(path, Math.min(this.limit, 10)),
+      expectedPath: path,
+      request: (url) => this.requestAppleJson(url, developerToken, signal),
+      decode: (value) => decodeCollection(value, decode),
+    })
   }
 
   private async requestAppleJson(
@@ -559,18 +652,7 @@ export class AppleCatalogProvider implements MusicProvider<AppleCatalogTrack> {
     signal: AbortSignal,
     musicUserToken?: string,
   ): Promise<unknown> {
-    const response = await this.fetchImpl(url, {
-      method: "GET",
-      headers: {
-        accept: "application/json",
-        authorization: `Bearer ${developerToken}`,
-        ...(musicUserToken ? { "music-user-token": musicUserToken } : {}),
-      },
-      redirect: "manual",
-      signal,
-    })
-    if (!response.ok) throw new AppleCatalogError("unavailable")
-    return readBoundedJson(response)
+    return this.transport.requestJson(url, developerToken, signal, musicUserToken)
   }
 
   private async requestPage<T>(
@@ -580,87 +662,47 @@ export class AppleCatalogProvider implements MusicProvider<AppleCatalogTrack> {
     personalized: boolean,
     decode: (value: unknown, nextCursor: string | null) => T,
   ): Promise<T> {
-    try {
-      return await runWithAbortTimeout(
-        async (signal) => {
-          const developer = await requestDeveloperToken(
-            this.serviceUrl,
-            this.fetchImpl,
-            { signal, timeoutMs: this.timeoutMs },
-          )
-          if (developer.mode !== "apple") throw new AppleCatalogError("unavailable")
-          const request = async (musicUserToken?: string) => {
-            const value = await this.requestAppleJson(
-              url,
-              developer.token,
-              signal,
-              musicUserToken,
-            )
-            const nextCursor = this.decodeNextCursor(value, expectedPath)
-            return decode(value, nextCursor)
-          }
-          if (!personalized) return request()
-          if (!this.useMusicUserToken) throw new AppleCatalogError("unavailable")
-          return this.useMusicUserToken((musicUserToken) => request(musicUserToken))
-        },
-        { signal: options.signal, timeoutMs: this.timeoutMs },
-      )
-    } catch (error) {
-      if (error instanceof AppleCatalogError) throw error
-      if (error instanceof Error && error.message === "Operation aborted") {
-        throw new AppleCatalogError("aborted")
-      }
-      if (error instanceof Error && error.message === "Operation timed out") {
-        throw new AppleCatalogError("timeout")
-      }
-      throw new AppleCatalogError("unavailable")
+    const request = async (
+      developerToken: string,
+      signal: AbortSignal,
+      musicUserToken?: string,
+    ) => {
+      const value = await this.requestAppleJson(url, developerToken, signal, musicUserToken)
+      return decode(value, this.pagination.decodeNextCursor(value, expectedPath))
     }
+    return personalized
+      ? this.requestPersonalized(
+          options,
+          (developerToken, musicUserToken, signal) =>
+            request(developerToken, signal, musicUserToken),
+        )
+      : this.requestCatalog(
+          options,
+          (developerToken, signal) => request(developerToken, signal),
+        )
   }
 
-  private buildSearchUrl(term: string): URL {
-    const url = new URL(this.searchPath, APPLE_API_ORIGIN)
-    url.search = new URLSearchParams({
-      term,
-      types: "songs",
-      limit: String(this.limit),
-    }).toString()
-    return url
+  private buildSearchUrl(
+    term: string,
+    resourceType: "songs" | "stations",
+  ): URL {
+    return this.pagination.buildSearchUrl(term, resourceType)
+  }
+
+  private validateSearchCursor(
+    cursor: string,
+    resourceType: "songs" | "stations",
+    term: string,
+  ): URL {
+    return this.pagination.validateSearchCursor(cursor, resourceType, term)
   }
 
   private validateCursor(cursor: string, expectedPath: string): URL {
-    if (cursor.length === 0 || cursor.length > MAX_CURSOR_LENGTH) {
-      throw new AppleCatalogError("invalid_request")
-    }
-    let url: URL
-    try {
-      url = new URL(cursor, APPLE_API_ORIGIN)
-    } catch {
-      throw new AppleCatalogError("invalid_request")
-    }
-    if (
-      url.origin !== APPLE_API_ORIGIN ||
-      url.pathname !== expectedPath ||
-      url.username !== "" ||
-      url.password !== "" ||
-      url.hash !== ""
-    ) {
-      throw new AppleCatalogError("invalid_request")
-    }
-    return url
+    return this.pagination.validateCursor(cursor, expectedPath)
   }
 
   private decodeNextCursor(value: unknown, expectedPath: string): string | null {
-    const root = requireCollection(value)
-    if (root.next === undefined) return null
-    if (typeof root.next !== "string") {
-      throw new AppleCatalogError("invalid_response")
-    }
-    try {
-      this.validateCursor(root.next, expectedPath)
-    } catch {
-      throw new AppleCatalogError("invalid_response")
-    }
-    return root.next
+    return this.pagination.decodeNextCursor(value, expectedPath)
   }
 
   private decodeRelationshipNextCursor(
@@ -668,713 +710,25 @@ export class AppleCatalogProvider implements MusicProvider<AppleCatalogTrack> {
     relationshipName: string,
     expectedPath: string,
   ): string | null {
-    const relationships = asRecord(resource.relationships)
-    const relationship = relationships && asRecord(relationships[relationshipName])
-    if (!relationship) throw new AppleCatalogError("invalid_response")
-    if (relationship.next === undefined) return null
-    if (typeof relationship.next !== "string") {
-      throw new AppleCatalogError("invalid_response")
-    }
-    try {
-      this.validateCursor(relationship.next, expectedPath)
-    } catch {
-      throw new AppleCatalogError("invalid_response")
-    }
-    return relationship.next
+    return this.pagination.decodeRelationshipNextCursor(
+      resource,
+      relationshipName,
+      expectedPath,
+    )
   }
 
-  private decodeResponse(value: unknown): SearchPage<AppleCatalogTrack> {
-    const root = asRecord(value)
-    const results = root && asRecord(root.results)
-    if (!results) throw new AppleCatalogError("invalid_response")
-
-    if (results.songs === undefined) return { items: [], nextCursor: null }
-    const songs = asRecord(results.songs)
-    if (!songs || !Array.isArray(songs.data)) {
-      throw new AppleCatalogError("invalid_response")
-    }
-
-    let nextCursor: string | null = null
-    if (songs.next !== undefined) {
-      if (typeof songs.next !== "string") {
-        throw new AppleCatalogError("invalid_response")
-      }
-      try {
-        this.validateCursor(songs.next, this.searchPath)
-      } catch {
-        throw new AppleCatalogError("invalid_response")
-      }
-      nextCursor = songs.next
-    }
-
-    const items = songs.data.map(decodeSong)
-    if (items.some((track) => track === null)) {
-      throw new AppleCatalogError("invalid_response")
-    }
-    return {
-      items: items as AppleCatalogTrack[],
-      nextCursor,
-    }
-  }
-}
-
-function collectionUrl(path: string, limit: number): URL {
-  const url = new URL(path, APPLE_API_ORIGIN)
-  url.searchParams.set("limit", String(limit))
-  return url
-}
-
-function requireCollection(
-  value: unknown,
-): Record<string, unknown> & { data: unknown[] } {
-  const root = asRecord(value)
-  if (!root || !Array.isArray(root.data)) {
-    throw new AppleCatalogError("invalid_response")
-  }
-  return root as Record<string, unknown> & { data: unknown[] }
-}
-
-function personalizedHeaders(
-  developerToken: string,
-  musicUserToken: string,
-): Record<string, string> {
-  return {
-    accept: "application/json",
-    authorization: `Bearer ${developerToken}`,
-    "music-user-token": musicUserToken,
-  }
-}
-
-function decodePersonalSongRating(value: unknown): ApplePersonalSongRating | null {
-  const data = requireCollection(value).data
-  if (data.length === 0) return null
-  if (data.length !== 1) throw new AppleCatalogError("invalid_response")
-  const rating = asRecord(data[0])
-  const attributes = rating && asRecord(rating.attributes)
-  const ratingValue = attributes?.value
-  if (rating?.type !== "ratings" || (ratingValue !== -1 && ratingValue !== 1)) {
-    throw new AppleCatalogError("invalid_response")
-  }
-  return ratingValue
-}
-
-function decodeCollection<T>(
-  value: unknown,
-  decode: (entry: unknown) => T | null,
-): T[] {
-  const items = requireCollection(value).data.map(decode)
-  if (items.some((item) => item === null)) {
-    throw new AppleCatalogError("invalid_response")
-  }
-  return items as T[]
-}
-
-function decodeHomeSections(value: unknown): AppleHomeSection[] {
-  const root = requireCollection(value)
-  const sections: AppleHomeSection[] = []
-  const knownIds = new Set<string>()
-  for (const entry of root.data) {
-    const recommendation = asRecord(entry)
-    const attributes = recommendation && asRecord(recommendation.attributes)
-    const title = attributes && asRecord(attributes.title)
-    const relationships = recommendation && asRecord(recommendation.relationships)
-    const contents = relationships && asRecord(relationships.contents)
-    if (
-      !recommendation ||
-      recommendation.type !== "personal-recommendation" ||
-      !isResourceId(recommendation.id) ||
-      !title ||
-      !isDisplayString(title.stringForDisplay, 200) ||
-      !contents ||
-      !Array.isArray(contents.data)
-    ) {
-      throw new AppleCatalogError("invalid_response")
-    }
-    const items: AppleCatalogPlaylist[] = []
-    for (const content of contents.data) {
-      const resource = asRecord(content)
-      if (resource?.type !== "playlists") continue
-      const playlist = decodeCatalogPlaylist(resource)
-      if (!playlist) throw new AppleCatalogError("invalid_response")
-      if (!knownIds.has(playlist.apple.resourceId)) {
-        knownIds.add(playlist.apple.resourceId)
-        items.push(playlist)
-      }
-    }
-    if (items.length > 0) {
-      sections.push({
-        id: recommendation.id,
-        title: title.stringForDisplay,
-        items,
-      })
-    }
-  }
-  return sections
-}
-
-function decodeCatalogPlaylist(value: unknown): AppleCatalogPlaylist | null {
-  const resource = asRecord(value)
-  const attributes = resource && asRecord(resource.attributes)
-  if (
-    !resource ||
-    resource.type !== "playlists" ||
-    !isResourceId(resource.id) ||
-    !attributes ||
-    !isDisplayString(attributes.name, 300)
-  ) {
-    return null
-  }
-  const curator = isDisplayString(attributes.curatorName, 300)
-    ? attributes.curatorName
-    : "Apple Music"
-  const description = decodeDescription(attributes.description)
-  const artwork = decodeArtwork(attributes.artwork)
-  const details = decodePlaylistDetails(attributes, false)
-  return {
-    id: `apple:playlist:${resource.id}`,
-    title: attributes.name,
-    curator,
-    ...(description ? { description } : {}),
-    apple: {
-      resourceId: resource.id,
-      resourceType: "playlists",
-      ...(artwork ? { artwork } : {}),
-      ...(details ? { details } : {}),
-    },
-  }
-}
-
-function decodeLibraryPlaylist(value: unknown): AppleLibraryPlaylist | null {
-  const resource = asRecord(value)
-  const attributes = resource && asRecord(resource.attributes)
-  if (
-    !resource ||
-    resource.type !== "library-playlists" ||
-    !isResourceId(resource.id) ||
-    !attributes ||
-    !isDisplayString(attributes.name, 300)
-  ) {
-    return null
-  }
-  const playParams = asRecord(attributes.playParams)
-  const globalId = playParams && isResourceId(playParams.globalId)
-    ? playParams.globalId
-    : undefined
-  const description = decodeDescription(attributes.description)
-  const artwork = decodeArtwork(attributes.artwork)
-  const details = decodePlaylistDetails(attributes, true)
-  return {
-    id: `apple:library-playlist:${resource.id}`,
-    title: attributes.name,
-    curator: "Your Library",
-    ...(description ? { description } : {}),
-    apple: {
-      resourceId: resource.id,
-      resourceType: "library-playlists",
-      ...(globalId ? { globalId } : {}),
-      ...(artwork ? { artwork } : {}),
-      ...(details ? { details } : {}),
-    },
-  }
-}
-
-function decodePlaylistTracks(value: unknown): AppleCatalogTrack[] {
-  const root = requireCollection(value)
-  const tracks: AppleCatalogTrack[] = []
-  const knownIds = new Set<string>()
-  for (const entry of root.data) {
-    const resource = asRecord(entry)
-    if (resource?.type === "music-videos" || resource?.type === "library-music-videos") {
-      continue
-    }
-    const track = resource?.type === "library-songs"
-      ? decodeLibrarySong(resource)
-      : decodeSong(resource)
-    if (track && !knownIds.has(track.id)) {
-      knownIds.add(track.id)
-      tracks.push(track)
-    } else if (resource?.type !== "library-songs") {
-      throw new AppleCatalogError("invalid_response")
-    }
-  }
-  return tracks
-}
-
-function decodeCatalogTracks(value: unknown): AppleCatalogTrack[] {
-  const tracks: AppleCatalogTrack[] = []
-  for (const entry of requireCollection(value).data) {
-    const resource = asRecord(entry)
-    if (resource?.type === "music-videos") continue
-    const track = decodeSong(resource)
-    if (!track) throw new AppleCatalogError("invalid_response")
-    tracks.push(track)
-  }
-  return tracks
-}
-
-function appendUniqueCatalogTracks(
-  current: readonly AppleCatalogTrack[],
-  additions: readonly AppleCatalogTrack[],
-): readonly AppleCatalogTrack[] {
-  const ids = new Set(current.map((track) => track.id))
-  return [
-    ...current,
-    ...additions.filter((track) => {
-      if (ids.has(track.id)) return false
-      ids.add(track.id)
-      return true
-    }),
-  ]
-}
-
-function decodeLibrarySong(resource: Record<string, unknown>): AppleCatalogTrack | null {
-  const attributes = asRecord(resource.attributes)
-  const playParams = attributes && asRecord(attributes.playParams)
-  if (
-    resource.type !== "library-songs" ||
-    !isResourceId(resource.id) ||
-    !attributes ||
-    !playParams ||
-    !isResourceId(playParams.catalogId)
-  ) {
-    return null
-  }
-  return decodeSong({
-    ...resource,
-    id: playParams.catalogId,
-    type: "songs",
-    attributes: {
-      ...attributes,
-      playParams: { id: playParams.catalogId, kind: "song" },
-    },
-  })
-}
-
-function decodeDescription(value: unknown): string | undefined {
-  const description = asRecord(value)
-  if (!description) return undefined
-  if (isDisplayString(description.standard, 2_000)) return description.standard
-  return isDisplayString(description.short, 500) ? description.short : undefined
-}
-
-function decodeTrackDetails(
-  attributes: Record<string, unknown>,
-): AppleTrackDetails | undefined {
-  const releaseDate = optionalDisplayString(attributes.releaseDate, 64)
-  const genreNames = decodeDisplayStrings(attributes.genreNames)
-  const trackNumber = decodePositiveInteger(attributes.trackNumber)
-  const discNumber = decodePositiveInteger(attributes.discNumber)
-  const composerName = optionalDisplayString(attributes.composerName, 500)
-  const contentRating = decodeContentRating(attributes.contentRating)
-  const editorialNotes = decodeDescription(attributes.editorialNotes)
-  const hasLyrics = decodeBoolean(attributes.hasLyrics)
-  const isAppleDigitalMaster = decodeBoolean(attributes.isAppleDigitalMaster)
-  return populated({
-    ...(releaseDate ? { releaseDate } : {}),
-    ...(genreNames ? { genreNames } : {}),
-    ...(trackNumber ? { trackNumber } : {}),
-    ...(discNumber ? { discNumber } : {}),
-    ...(composerName ? { composerName } : {}),
-    ...(contentRating ? { contentRating } : {}),
-    ...(editorialNotes ? { editorialNotes } : {}),
-    ...(hasLyrics !== undefined ? { hasLyrics } : {}),
-    ...(isAppleDigitalMaster !== undefined ? { isAppleDigitalMaster } : {}),
-  })
-}
-
-function decodeAlbumDetails(
-  attributes: Record<string, unknown>,
-): AppleAlbumDetails | undefined {
-  const releaseDate = optionalDisplayString(attributes.releaseDate, 64)
-  const genreNames = decodeDisplayStrings(attributes.genreNames)
-  const trackCount = decodePositiveInteger(attributes.trackCount)
-  const recordLabel = optionalDisplayString(attributes.recordLabel, 500)
-  const copyright = optionalDisplayString(attributes.copyright, 1_000)
-  const contentRating = decodeContentRating(attributes.contentRating)
-  const editorialNotes = decodeDescription(attributes.editorialNotes)
-  const isCompilation = decodeBoolean(attributes.isCompilation)
-  const isSingle = decodeBoolean(attributes.isSingle)
-  return populated({
-    ...(releaseDate ? { releaseDate } : {}),
-    ...(genreNames ? { genreNames } : {}),
-    ...(trackCount ? { trackCount } : {}),
-    ...(recordLabel ? { recordLabel } : {}),
-    ...(copyright ? { copyright } : {}),
-    ...(contentRating ? { contentRating } : {}),
-    ...(editorialNotes ? { editorialNotes } : {}),
-    ...(isCompilation !== undefined ? { isCompilation } : {}),
-    ...(isSingle !== undefined ? { isSingle } : {}),
-  })
-}
-
-function decodeArtistDetails(
-  attributes: Record<string, unknown>,
-): AppleArtistDetails | undefined {
-  const genreNames = decodeDisplayStrings(attributes.genreNames)
-  const editorialNotes = decodeDescription(attributes.editorialNotes)
-  return populated({
-    ...(genreNames ? { genreNames } : {}),
-    ...(editorialNotes ? { editorialNotes } : {}),
-  })
-}
-
-function decodePlaylistDetails(
-  attributes: Record<string, unknown>,
-  library: boolean,
-): ApplePlaylistDetails | undefined {
-  const lastModifiedDate = optionalDisplayString(attributes.lastModifiedDate, 64)
-  const dateAdded = optionalDisplayString(attributes.dateAdded, 64)
-  const playlistType = optionalDisplayString(attributes.playlistType, 64)
-  const isChart = decodeBoolean(attributes.isChart)
-  const canEdit = decodeBoolean(attributes.canEdit)
-  const isPublic = decodeBoolean(attributes.isPublic)
-  const hasCatalog = decodeBoolean(attributes.hasCatalog)
-  return populated({
-    ...(!library && lastModifiedDate ? { lastModifiedDate } : {}),
-    ...(library && dateAdded ? { dateAdded } : {}),
-    ...(!library && playlistType ? { playlistType } : {}),
-    ...(!library && isChart !== undefined ? { isChart } : {}),
-    ...(library && canEdit !== undefined ? { canEdit } : {}),
-    ...(library && isPublic !== undefined ? { isPublic } : {}),
-    ...(library && hasCatalog !== undefined ? { hasCatalog } : {}),
-  })
-}
-
-function optionalDisplayString(value: unknown, maxLength: number): string | undefined {
-  return isDisplayString(value, maxLength) ? value : undefined
-}
-
-function decodeDisplayStrings(value: unknown): readonly string[] | undefined {
-  if (!Array.isArray(value) || value.length === 0 || value.length > MAX_GENRES) {
-    return undefined
-  }
-  if (value.some((item) => !isDisplayString(item, 100))) return undefined
-  return value as string[]
-}
-
-function decodePositiveInteger(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isSafeInteger(value) && value > 0
-    ? value
-    : undefined
-}
-
-function decodeBoolean(value: unknown): boolean | undefined {
-  return typeof value === "boolean" ? value : undefined
-}
-
-function decodeContentRating(value: unknown): AppleContentRating | undefined {
-  return value === "clean" || value === "explicit" ? value : undefined
-}
-
-function populated<T extends object>(value: T): T | undefined {
-  return Object.keys(value).length > 0 ? value : undefined
-}
-
-function validateQuery(query: string): string {
-  if (typeof query !== "string") throw new AppleCatalogError("invalid_request")
-  const term = query.trim()
-  if (
-    term.length === 0 ||
-    term.length > MAX_QUERY_LENGTH ||
-    /[\u0000-\u001f\u007f-\u009f]/u.test(term)
-  ) {
-    throw new AppleCatalogError("invalid_request")
-  }
-  return term
-}
-
-function decodeSong(value: unknown): AppleCatalogTrack | null {
-  const resource = asRecord(value)
-  const attributes = resource && asRecord(resource.attributes)
-  if (
-    !resource ||
-    resource.type !== "songs" ||
-    !isResourceId(resource.id) ||
-    !attributes ||
-    !isNonEmptyString(attributes.name) ||
-    !isNonEmptyString(attributes.artistName) ||
-    !isNonEmptyString(attributes.albumName) ||
-    typeof attributes.durationInMillis !== "number" ||
-    !Number.isFinite(attributes.durationInMillis) ||
-    attributes.durationInMillis < 0
-  ) {
-    return null
+  private decodeSearchResponse<T>(
+    value: unknown,
+    resourceType: "songs" | "stations",
+    term: string,
+    decode: (value: unknown) => T | null,
+  ): SearchPage<T> {
+    return decodeCatalogSearchResponse(value, resourceType, term, decode, this.pagination)
   }
 
-  const artwork = decodeArtwork(attributes.artwork)
-  const playParams = decodePlayParams(attributes.playParams, resource.id)
-  const audioTraits = decodeAudioTraits(attributes.audioTraits)
-  const audioQuality = audioTraits && catalogAudioQuality(audioTraits)
-  const details = decodeTrackDetails(attributes)
-  return {
-    id: `apple:song:${resource.id}`,
-    title: attributes.name,
-    artist: attributes.artistName,
-    album: attributes.albumName,
-    durationSeconds: attributes.durationInMillis / 1000,
-    ...(audioQuality ? { audioQuality } : {}),
-    apple: {
-      resourceId: resource.id,
-      resourceType: "songs",
-      ...(playParams ? { playParams } : {}),
-      ...(artwork ? { artwork } : {}),
-      ...(audioTraits ? { audioTraits } : {}),
-      ...(details ? { details } : {}),
-    },
+  private logRequestFailure(error: unknown): void {
+    this.logger.log("catalog_request_failed", {
+      code: error instanceof AppleCatalogError ? error.code : "unavailable",
+    })
   }
-}
-
-function decodeAudioTraits(value: unknown): readonly AppleAudioTrait[] | undefined {
-  if (value === undefined) return undefined
-  if (!Array.isArray(value) || value.length > MAX_AUDIO_TRAITS) return undefined
-  if (value.some((trait) => typeof trait !== "string" || trait.length > 64)) {
-    return undefined
-  }
-  const traits = [...new Set(
-    value.filter((trait): trait is AppleAudioTrait =>
-      knownAudioTraits.has(trait as AppleAudioTrait)
-    ),
-  )]
-  return traits.length > 0 ? traits : undefined
-}
-
-function catalogAudioQuality(traits: readonly AppleAudioTrait[]): AudioQuality | undefined {
-  if (traits.includes("atmos") || traits.includes("dolby-atmos")) {
-    return { format: "dolby-atmos", source: "catalog" }
-  }
-  if (traits.includes("hi-res-lossless")) {
-    return { format: "hi-res-lossless", source: "catalog" }
-  }
-  if (traits.includes("lossless")) {
-    return { format: "lossless", source: "catalog" }
-  }
-  if (traits.includes("dolby-audio")) {
-    return { format: "dolby-audio", source: "catalog" }
-  }
-  if (traits.includes("spatial")) {
-    return { format: "spatial-audio", source: "catalog" }
-  }
-  if (traits.includes("lossy-stereo")) {
-    return { format: "stereo", source: "catalog" }
-  }
-  return undefined
-}
-
-function decodeSingleResource(
-  value: unknown,
-  resourceType: "songs" | "albums" | "artists",
-): Record<string, unknown> {
-  const root = asRecord(value)
-  if (!root || !Array.isArray(root.data) || root.data.length !== 1) {
-    throw new AppleCatalogError("invalid_response")
-  }
-  const resource = asRecord(root.data[0])
-  if (
-    !resource ||
-    resource.type !== resourceType ||
-    !isResourceId(resource.id)
-  ) {
-    throw new AppleCatalogError("invalid_response")
-  }
-  return resource
-}
-
-function decodeRelationshipId(
-  resource: Record<string, unknown>,
-  relationshipName: string,
-  resourceType: "albums",
-): string | null {
-  const relationships = asRecord(resource.relationships)
-  const relationship = relationships && asRecord(relationships[relationshipName])
-  if (!relationship || !Array.isArray(relationship.data) || relationship.data.length < 1) {
-    return null
-  }
-  const related = asRecord(relationship.data[0])
-  return related && related.type === resourceType && isResourceId(related.id)
-    ? related.id
-    : null
-}
-
-function decodeAlbumSummary(value: unknown): AppleCatalogAlbumSummary | null {
-  const resource = asRecord(value)
-  const attributes = resource && asRecord(resource.attributes)
-  if (
-    !resource ||
-    resource.type !== "albums" ||
-    !isResourceId(resource.id) ||
-    !attributes ||
-    !isDisplayString(attributes.name, 300) ||
-    !isDisplayString(attributes.artistName, 500)
-  ) {
-    return null
-  }
-  const artwork = decodeArtwork(attributes.artwork)
-  const details = decodeAlbumDetails(attributes)
-  return {
-    id: `apple:album:${resource.id}`,
-    title: attributes.name,
-    artist: attributes.artistName,
-    apple: {
-      resourceId: resource.id,
-      resourceType: "albums",
-      ...(artwork ? { artwork } : {}),
-      ...(details ? { details } : {}),
-    },
-  }
-}
-
-function decodeAlbum(resource: Record<string, unknown>): AppleCatalogAlbum {
-  const summary = decodeAlbumSummary(resource)
-  const attributes = asRecord(resource.attributes)
-  const relationships = asRecord(resource.relationships)
-  const tracks = relationships && asRecord(relationships.tracks)
-  if (
-    !summary ||
-    !attributes ||
-    !tracks ||
-    !Array.isArray(tracks.data)
-  ) {
-    throw new AppleCatalogError("invalid_response")
-  }
-  const decodedTracks = decodeCatalogTracks(tracks)
-  return {
-    ...summary,
-    tracks: decodedTracks,
-  }
-}
-
-function decodeArtist(value: unknown): AppleCatalogArtist | null {
-  const resource = asRecord(value)
-  const attributes = resource && asRecord(resource.attributes)
-  if (
-    !resource ||
-    resource.type !== "artists" ||
-    !isResourceId(resource.id) ||
-    !attributes ||
-    !isDisplayString(attributes.name, 500)
-  ) {
-    return null
-  }
-  const artwork = decodeArtwork(attributes.artwork)
-  const details = decodeArtistDetails(attributes)
-  return {
-    id: `apple:artist:${resource.id}`,
-    name: attributes.name,
-    apple: {
-      resourceId: resource.id,
-      resourceType: "artists",
-      ...(artwork ? { artwork } : {}),
-      ...(details ? { details } : {}),
-    },
-  }
-}
-
-function decodeArtistSectionPage(
-  value: unknown,
-  section: AppleArtistSectionName,
-  nextCursor: string | null,
-): AppleArtistSectionPage {
-  switch (section) {
-    case "top-songs":
-      return { section, items: decodeCollection(value, decodeSong), nextCursor }
-    case "latest-release":
-    case "full-albums":
-    case "singles":
-      return {
-        section,
-        items: decodeCollection(value, decodeAlbumSummary),
-        nextCursor,
-      }
-    case "similar-artists":
-      return { section, items: decodeCollection(value, decodeArtist), nextCursor }
-  }
-}
-
-function decodeArtwork(value: unknown): AppleArtwork | undefined {
-  const artwork = asRecord(value)
-  if (!artwork || !isNonEmptyString(artwork.url)) return undefined
-  const width = decodeDimension(artwork.width)
-  const height = decodeDimension(artwork.height)
-  if (width === undefined || height === undefined) return undefined
-  return { url: artwork.url, width, height }
-}
-
-function decodeDimension(value: unknown): number | null | undefined {
-  if (value === null) return null
-  return typeof value === "number" && Number.isInteger(value) && value >= 0
-    ? value
-    : undefined
-}
-
-function decodePlayParams(
-  value: unknown,
-  resourceId: string,
-): AppleCatalogTrack["apple"]["playParams"] {
-  const playParams = asRecord(value)
-  return playParams &&
-    playParams.id === resourceId &&
-    playParams.kind === "song"
-    ? { id: playParams.id, kind: playParams.kind }
-    : undefined
-}
-
-async function readBoundedJson(response: Response): Promise<unknown> {
-  if (!/^application\/json(?:\s*;|$)/i.test(response.headers.get("content-type") ?? "")) {
-    throw new AppleCatalogError("invalid_response")
-  }
-  const contentLength = response.headers.get("content-length")
-  if (contentLength !== null) {
-    const declaredLength = Number(contentLength)
-    if (!Number.isFinite(declaredLength) || declaredLength < 0 || declaredLength > MAX_RESPONSE_BYTES) {
-      throw new AppleCatalogError("invalid_response")
-    }
-  }
-
-  const reader = response.body?.getReader()
-  if (!reader) throw new AppleCatalogError("invalid_response")
-  const chunks: Uint8Array[] = []
-  let length = 0
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    length += value.byteLength
-    if (length > MAX_RESPONSE_BYTES) {
-      await reader.cancel()
-      throw new AppleCatalogError("invalid_response")
-    }
-    chunks.push(value)
-  }
-
-  const bytes = new Uint8Array(length)
-  let offset = 0
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset)
-    offset += chunk.byteLength
-  }
-  try {
-    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown
-  } catch {
-    throw new AppleCatalogError("invalid_response")
-  }
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : null
-}
-
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.length > 0
-}
-
-function isDisplayString(value: unknown, maxLength: number): value is string {
-  return typeof value === "string" &&
-    value.length > 0 &&
-    value.length <= maxLength &&
-    !/[\u0000-\u001f\u007f-\u009f]/u.test(value)
-}
-
-function isResourceId(value: unknown): value is string {
-  return typeof value === "string" && /^[A-Za-z0-9._-]{1,128}$/.test(value)
 }

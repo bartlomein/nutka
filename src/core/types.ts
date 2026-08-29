@@ -91,7 +91,10 @@ export interface AppleCatalogTrack extends Track {
   }
 }
 
-export type ApplePersonalSongRating = -1 | 1
+export type ApplePersonalRating = -1 | 1
+export type ApplePersonalRatingResourceType = "songs" | "stations"
+export type ApplePersonalSongRating = ApplePersonalRating
+export type ApplePersonalStationRating = ApplePersonalRating
 
 export interface AppleCatalogAlbumSummary {
   id: string
@@ -117,6 +120,33 @@ export interface AppleCatalogArtist {
     resourceType: "artists"
     artwork?: AppleArtwork
     details?: AppleArtistDetails
+  }
+}
+
+export interface Station {
+  id: string
+  title: string
+  subtitle?: string
+  description?: string
+  isLive: boolean
+}
+
+export interface AppleCatalogStation extends Station {
+  apple: {
+    resourceId: string
+    resourceType: "stations"
+    playParams?: { id: string; kind: "radioStation" }
+    externalLiveStream?: true
+    artwork: AppleArtwork
+  }
+}
+
+export interface AppleCatalogStationGenre {
+  id: string
+  name: string
+  apple: {
+    resourceId: string
+    resourceType: "station-genres"
   }
 }
 
@@ -178,7 +208,7 @@ export interface AppleCatalogPlaylist extends ApplePlaylistBase {
 export interface AppleHomeSection {
   id: string
   title: string
-  items: readonly AppleCatalogPlaylist[]
+  items: readonly (AppleCatalogPlaylist | AppleCatalogStation)[]
 }
 
 export interface AppleLibraryPlaylist extends ApplePlaylistBase {
@@ -213,6 +243,15 @@ export type PlaybackStatus = "idle" | "playing" | "paused"
 export type PlaybackShuffleMode = "off" | "songs"
 export type PlaybackRepeatMode = "none" | "all" | "one"
 
+export type PlaybackSource =
+  | { readonly type: "finite" }
+  | {
+      readonly type: "station"
+      readonly id: string
+      readonly title: string
+      readonly isLive: boolean
+    }
+
 export interface PlaybackSnapshot<TTrack extends Track = Track> {
   readonly status: PlaybackStatus
   readonly currentTrack: TTrack | null
@@ -224,6 +263,11 @@ export interface PlaybackSnapshot<TTrack extends Track = Track> {
   readonly repeatMode: PlaybackRepeatMode
   readonly canSetShuffleMode: boolean
   readonly canSetRepeatMode: boolean
+  readonly source?: PlaybackSource | null
+  readonly dynamicQueue?: boolean
+  readonly canSeek?: boolean
+  readonly canSkipNext?: boolean
+  readonly canSkipPrevious?: boolean
 }
 
 export interface AudioSpectrumFrame {
@@ -243,6 +287,7 @@ export interface PlaybackController<TTrack extends Track = Track> {
   readonly audioAnalysis?: AudioAnalysisSource
   subscribe(listener: (snapshot: PlaybackSnapshot<TTrack>) => void): () => void
   play(track: TTrack, upcomingTracks: readonly TTrack[]): Promise<void>
+  playStation?(station: Station): Promise<void>
   pause(): Promise<void>
   resume(): Promise<void>
   previous(): Promise<void>

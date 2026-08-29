@@ -128,8 +128,14 @@ export function destinationLabel(destination: Destination): string {
   return destination[0]!.toUpperCase() + destination.slice(1)
 }
 
-export function emptyMessage(destination: Destination, baseTrackCount: number): string {
-  if (destination === "queue" && baseTrackCount === 0) return "queue is empty"
+export function emptyMessage(
+  destination: Destination,
+  baseTrackCount: number,
+  dynamicQueue = false,
+): string {
+  if (destination === "queue" && baseTrackCount === 0) {
+    return dynamicQueue ? "radio continues as songs are chosen" : "queue is empty"
+  }
   if (baseTrackCount === 0) {
     return destination === "search"
       ? "Apple Music search is not connected"
@@ -165,7 +171,7 @@ export function footerHelp(state: AppState, width = 120): string {
   if (state.mode.type === "search") return "type query   enter search Apple Music   esc cancel"
   if (state.mode.type === "filter") return "type filter   ↑/↓ move   enter apply   esc cancel"
   if (state.mode.pendingKey === "g") {
-    return "n now playing   h home   l library   p playlists   s search   q queue"
+    return "n now playing   h home   l library   p playlists   r radio   s search   q queue"
   }
   if (width < 64) return "↑↓ move  enter play  l like  ←→ seek"
   if (width < 100) return "j/k move  enter play  l like  b/s/n transport  r repeat"
@@ -177,6 +183,28 @@ export function searchFooterHelp(hasMore: boolean, width: number): string {
   return hasMore
     ? "enter play   i info   l like   g s search   a album   m more"
     : "enter play   i info   l like   g s search   a album"
+}
+
+export function radioFooterHelp(
+  hasMore: boolean,
+  stationSelected: boolean,
+  favorite: boolean,
+  unavailable: boolean,
+  width: number,
+): string {
+  if (!stationSelected) return hasMore
+    ? "enter browse   / search stations   m more"
+    : "enter browse   / search stations"
+  const action = favorite ? "unfavorite" : "favorite"
+  if (unavailable) return width < 64
+    ? `unavailable in MusicKit  f ${action}`
+    : `Apple Music cannot play this external radio stream   f ${action}`
+  if (width < 64) return hasMore
+    ? `enter play  f ${action}  / search  m more`
+    : `enter play  f ${action}  / search`
+  return hasMore
+    ? `enter play or browse   f ${action}   / search stations   m more   ctrl+p commands`
+    : `enter play or browse   f ${action}   / search stations   ctrl+p commands`
 }
 
 export function albumFooterHelp(width: number): string {
@@ -195,6 +223,26 @@ export function playlistFooterHelp(
   return hasMore
     ? `enter open playlist   i info   / filter   m load more${back}`
     : `enter open playlist   i info   / filter${back}`
+}
+
+export function homeFooterHelp(
+  hasMore: boolean,
+  stationSelected: boolean,
+  favorite: boolean,
+  unavailable: boolean,
+  width: number,
+): string {
+  if (!stationSelected) return playlistFooterHelp(hasMore, width, "home")
+  const action = favorite ? "unfavorite" : "favorite"
+  if (unavailable) return width < 64
+    ? `unavailable in MusicKit  f ${action}`
+    : `Apple Music cannot play this external radio stream   f ${action}`
+  if (width < 64) return hasMore
+    ? `enter play  f ${action}  m more`
+    : `enter play  f ${action}`
+  return hasMore
+    ? `enter play station   f ${action}   / filter   m load more`
+    : `enter play station   f ${action}   / filter`
 }
 
 export function playlistDetailFooterHelp(hasMore: boolean, width: number): string {
@@ -250,6 +298,9 @@ export function playbackErrorMessage(errorCode: string): string {
     return "the playback worker stopped; press Enter to retry"
   }
   if (errorCode === "playback_timeout") return "Apple Music playback did not start"
+  if (errorCode === "external_station_unsupported") {
+    return "Apple Music cannot play this external radio stream in MusicKit"
+  }
   if (errorCode === "drm_unavailable") return "Apple Music DRM is unavailable"
   return "Apple Music could not complete the playback request"
 }

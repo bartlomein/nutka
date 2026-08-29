@@ -13,6 +13,8 @@ import {
 import { ApplePlaybackController } from "./services/apple-playback"
 import { createAuthLogger } from "./services/auth-log"
 import { createCredentialStore } from "./services/credentials"
+import { createFavoriteStationStore } from "./services/favorite-stations"
+import { createPlaybackLogger } from "./services/playback-log"
 import { createNutkaApp } from "./ui/app"
 import { theme } from "./ui/theme"
 import {
@@ -71,14 +73,17 @@ if (signerUrl) {
 
 let unsubscribeAuth: (() => void) | undefined
 let catalogProvider: AppleCatalogProvider | undefined
+const playbackLogger = createPlaybackLogger()
 const playbackController = authManager && tokenServiceUrl
   ? new ApplePlaybackController({
       serviceUrl: tokenServiceUrl,
       executablePath: process.env.NUTKA_CHROMIUM_PATH,
       useMusicUserToken: (use) => authManager!.useMusicUserToken(use),
+      logger: playbackLogger,
     })
   : undefined
 let shuttingDown = false
+const favoriteStationStore = createFavoriteStationStore()
 
 const app = createNutkaApp(renderer, {
   tracks: [],
@@ -86,6 +91,10 @@ const app = createNutkaApp(renderer, {
   onSearchSongs: (query, options) => {
     if (!catalogProvider) return Promise.reject(new Error("Apple Music sign-in required"))
     return catalogProvider.searchSongs(query, options)
+  },
+  onSearchStations: (query, options) => {
+    if (!catalogProvider) return Promise.reject(new Error("Apple Music sign-in required"))
+    return catalogProvider.searchStations(query, options)
   },
   onGetAlbumForSong: (songResourceId, options) => {
     if (!catalogProvider) return Promise.reject(new Error("Apple Music sign-in required"))
@@ -114,6 +123,47 @@ const app = createNutkaApp(renderer, {
   onGetPlaylistTracks: (playlist, options) => {
     if (!catalogProvider) return Promise.reject(new Error("Apple Music sign-in required"))
     return catalogProvider.getPlaylistTracks(playlist, options)
+  },
+  onGetPersonalStation: (options) => {
+    if (!catalogProvider) return Promise.reject(new Error("Apple Music sign-in required"))
+    return catalogProvider.getPersonalStation(options)
+  },
+  onGetLiveRadioStations: (options) => {
+    if (!catalogProvider) return Promise.reject(new Error("Apple Music sign-in required"))
+    return catalogProvider.getLiveRadioStations(options)
+  },
+  onGetRecentlyPlayedStations: (options) => {
+    if (!catalogProvider) return Promise.reject(new Error("Apple Music sign-in required"))
+    return catalogProvider.getRecentlyPlayedStations(options)
+  },
+  onGetStationForResource: (resourceType, resourceId, options) => {
+    if (!catalogProvider) return Promise.reject(new Error("Apple Music sign-in required"))
+    return catalogProvider.getStationForResource(resourceType, resourceId, options)
+  },
+  onGetStationsByIds: (resourceIds, options) => {
+    if (!catalogProvider) return Promise.reject(new Error("Apple Music sign-in required"))
+    return catalogProvider.getStationsByIds(resourceIds, options)
+  },
+  onGetStationGenres: (options) => {
+    if (!catalogProvider) return Promise.reject(new Error("Apple Music sign-in required"))
+    return catalogProvider.getStationGenres(options)
+  },
+  onGetStationsForGenre: (genreResourceId, options) => {
+    if (!catalogProvider) return Promise.reject(new Error("Apple Music sign-in required"))
+    return catalogProvider.getStationsForGenre(genreResourceId, options)
+  },
+  onLoadFavoriteStationIds: (storefront) => favoriteStationStore.load(storefront),
+  onSetStationFavorite: (storefront, resourceId, favorite) => {
+    favoriteStationStore.set(storefront, resourceId, favorite)
+  },
+  onGetStationLiked: async (stationResourceId, options) => {
+    if (!catalogProvider) throw new Error("Apple Music sign-in required")
+    return (await catalogProvider.getPersonalStationRating(stationResourceId, options)) === 1
+  },
+  onSetStationLiked: async (stationResourceId, liked, options) => {
+    if (!catalogProvider) throw new Error("Apple Music sign-in required")
+    if (liked) await catalogProvider.setPersonalStationRating(stationResourceId, 1, options)
+    else await catalogProvider.deletePersonalStationRating(stationResourceId, options)
   },
   onGetSongLiked: async (songResourceId, options) => {
     if (!catalogProvider) throw new Error("Apple Music sign-in required")
@@ -147,9 +197,10 @@ if (authManager) {
   unsubscribeAuth = authManager.subscribe((status) => {
     catalogProvider =
       status.state === "signedIn"
-        ? new AppleCatalogProvider(tokenServiceUrl!, status.storefront, {
-            useMusicUserToken: (use) => authManager!.useMusicUserToken(use),
-          })
+         ? new AppleCatalogProvider(tokenServiceUrl!, status.storefront, {
+             useMusicUserToken: (use) => authManager!.useMusicUserToken(use),
+             logger: playbackLogger,
+           })
         : undefined
     if (status.state === "signedIn") playbackController?.enableAuthorization()
     app.setAppleAuthStatus(status)
@@ -167,8 +218,8 @@ process.once("SIGTERM", () => void shutdown())
 process.once("SIGHUP", () => void shutdown())
 
 async function signOut(): Promise<void> {
-  await playbackController?.clearAuthorization()
   await authManager!.logout()
+  await playbackController?.clearAuthorization()
 }
 
 async function shutdown(): Promise<void> {

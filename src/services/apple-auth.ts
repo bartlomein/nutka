@@ -302,7 +302,9 @@ export class AppleAuthManager {
           cliToken,
           this.fetchImpl,
           { timeoutMs: this.networkTimeoutMs },
-        ).catch(() => {})
+        ).catch(() => {
+          this.logger.log("session_cancel_cleanup_failed", { code: "cleanup_failed" })
+        })
       : Promise.resolve()
     this.disposePromise = Promise.all([
       this.credentialWrites,
@@ -423,7 +425,7 @@ export class AppleAuthManager {
       if (this.authorizationBrowser === browserSession) {
         await this.closeAuthorizationBrowser()
       } else {
-        await closeBrowserSession(browserSession)
+        await closeBrowserSession(browserSession, this.logger)
       }
       this.logger.log("browser_open_failed")
       if (!this.isCurrent(operation)) return
@@ -683,7 +685,9 @@ export class AppleAuthManager {
   private trackBrokerCleanup(cleanup: Promise<void>): void {
     this.brokerCleanup = Promise.all([
       this.brokerCleanup,
-      cleanup.catch(() => {}),
+      cleanup.catch(() => {
+        this.logger.log("broker_cleanup_failed", { code: "cleanup_failed" })
+      }),
     ]).then(() => {})
   }
 
@@ -691,7 +695,7 @@ export class AppleAuthManager {
     const browser = this.authorizationBrowser
     this.authorizationBrowser = undefined
     if (!browser) return this.browserCleanup
-    const cleanup = closeBrowserSession(browser)
+    const cleanup = closeBrowserSession(browser, this.logger)
     this.browserCleanup = Promise.all([this.browserCleanup, cleanup]).then(() => {})
     return this.browserCleanup
   }
@@ -706,6 +710,7 @@ export class AppleAuthManager {
       try {
         listener(status)
       } catch {
+        this.logger.log("auth_listener_failed", { code: "listener_failed" })
         // A UI listener must not interrupt credential handling.
       }
     }
@@ -729,10 +734,12 @@ function isAuthorizationBrowserSession(
 
 async function closeBrowserSession(
   browser: AppleAuthorizationBrowserSession | undefined,
+  logger: AuthLogger,
 ): Promise<void> {
   try {
     await browser?.close()
   } catch {
+    logger.log("browser_cleanup_failed", { code: "cleanup_failed" })
     // Browser cleanup cannot be allowed to retain a Music User Token in memory.
   }
 }

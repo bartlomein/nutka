@@ -15,6 +15,7 @@ test("client environment excludes Apple signing and fetch-debug variables", () =
     NUTKA_AUTH_LOG: "/tmp/nutka-auth.log",
     NUTKA_CHROMIUM_PATH: "/opt/chrome",
     NUTKA_CONFIG_PATH: "/home/example/nutka.toml",
+    NUTKA_PLAYBACK_LOG: "/tmp/nutka-playback.log",
     NUTKA_THEME_PATH: "/home/example/theme.toml",
     NUTKA_TOKEN_SERVICE_MODE: "apple",
   })
@@ -26,6 +27,7 @@ test("client environment excludes Apple signing and fetch-debug variables", () =
     NUTKA_AUTH_LOG: "/tmp/nutka-auth.log",
     NUTKA_CHROMIUM_PATH: "/opt/chrome",
     NUTKA_CONFIG_PATH: "/home/example/nutka.toml",
+    NUTKA_PLAYBACK_LOG: "/tmp/nutka-playback.log",
     NUTKA_THEME_PATH: "/home/example/theme.toml",
     PATH: "/usr/local/bin:/usr/bin:/bin",
   })

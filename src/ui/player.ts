@@ -9,6 +9,7 @@ import type {
   AudioSpectrumFrame,
   PlaybackRepeatMode,
   PlaybackShuffleMode,
+  PlaybackSource,
   PlaybackStatus,
   Track,
 } from "../core/types"
@@ -33,6 +34,11 @@ export interface PlayerPanelState {
   repeatMode: PlaybackRepeatMode
   canSetShuffleMode: boolean
   canSetRepeatMode: boolean
+  source?: PlaybackSource | null
+  dynamicQueue?: boolean
+  canSeek?: boolean
+  canSkipNext?: boolean
+  canSkipPrevious?: boolean
   liked: boolean
   likeStatus: "unavailable" | "loading" | "ready" | "saving" | "error"
 }
@@ -146,7 +152,9 @@ export function createPlayerPanel(
     latestState = state
     const track = state.currentTrack
     const duration = state.durationSeconds ?? track?.durationSeconds ?? null
-    progressDuration = track && duration !== null && duration > 0 ? duration : null
+    progressDuration = state.canSeek !== false && track && duration !== null && duration > 0
+      ? duration
+      : null
     progressWidth = progressBarWidth(terminalWidth)
     const position = finiteSeconds(state.positionSeconds)
     const boundedPosition = duration !== null && duration > 0
@@ -165,9 +173,11 @@ export function createPlayerPanel(
     status.fg = statusColor
     progress.fg = statusColor
     title.fg = track ? theme.text : state.errorMessage ? theme.amber : theme.muted
-    previousControl.fg = track ? theme.accent : theme.muted
+    previousControl.fg = track && state.canSkipPrevious !== false ? theme.accent : theme.muted
     playPauseControl.fg = track ? theme.accent : theme.muted
-    nextControl.fg = state.queue.length > 0 || state.repeatMode !== "none"
+    nextControl.fg = state.canSkipNext !== false && (
+        state.queue.length > 0 || state.repeatMode !== "none" || state.dynamicQueue
+      )
       ? theme.accent
       : theme.muted
 
@@ -188,8 +198,13 @@ export function createPlayerPanel(
       : state.status === "paused"
         ? "▶"
         : "○"
+    const stationContext = state.source?.type === "station"
+      ? `${state.source.isLive ? "LIVE" : "RADIO"} ${state.source.title}`
+      : null
     details.content = track
-      ? `${track.artist}  ·  ${track.album}`
+      ? `${stationContext ? `${stationContext}  ·  ` : ""}${track.artist}  ·  ${track.album}`
+      : stationContext
+        ? stationContext
       : state.errorMessage
         ? state.errorMessage
         : state.connected
@@ -209,6 +224,8 @@ export function createPlayerPanel(
       next.content = `NEXT  ${nextTrack.title}  ·  ${nextTrack.artist}`
     } else if (track && state.repeatMode === "all") {
       next.content = "NEXT  queue repeats"
+    } else if (track && state.dynamicQueue) {
+      next.content = "QUEUE  radio continues"
     } else {
       next.content = track ? "QUEUE  end of queue" : ""
     }

@@ -6,10 +6,10 @@ import puppeteer, { type Browser, type Page } from "puppeteer-core"
 
 import type {
   AppleCatalogTrack,
-  AudioQuality,
   PlaybackRepeatMode,
   PlaybackShuffleMode,
 } from "../core/types"
+import type { PlaybackBrowserSnapshot } from "./apple-playback-protocol"
 import {
   isPlaybackDocumentUrl,
   loopbackPlaybackUrl,
@@ -21,6 +21,7 @@ const PAGE_READY_TIMEOUT_MS = 30_000
 const PLAYBACK_START_TIMEOUT_MS = 30_000
 const CONTROL_TIMEOUT_MS = 10_000
 const MAX_PACTL_OUTPUT_BYTES = 256 * 1024
+const PACTL_TIMEOUT_MS = 3_000
 
 export type ApplePlaybackProbeErrorCode =
   | "invalid_track"
@@ -43,27 +44,7 @@ export class ApplePlaybackProbeError extends Error {
   }
 }
 
-export interface PlaybackProbeSnapshot {
-  initialized: boolean
-  authorized?: boolean
-  isPlaying?: boolean
-  playbackState?: number | null
-  positionSeconds?: number
-  durationSeconds?: number | null
-  resourceId?: string | null
-  title?: string | null
-  artist?: string | null
-  queueResourceIds?: readonly string[]
-  queuePosition?: number
-  shuffleMode?: PlaybackShuffleMode
-  repeatMode?: PlaybackRepeatMode
-  canSetShuffleMode?: boolean
-  canSetRepeatMode?: boolean
-  lastErrorCode?: string | null
-  commandSequence?: number
-  completedCommandSequence?: number
-  audioQuality?: AudioQuality | null
-}
+export type PlaybackProbeSnapshot = PlaybackBrowserSnapshot
 
 export type PlaybackProbeControl =
   | "play"
@@ -77,6 +58,7 @@ export interface PlaybackProbeBrowser {
   readonly processId: number | null
   initialize(developerToken: string, musicUserToken: string): Promise<void>
   setQueue(resourceIds: readonly string[]): Promise<void>
+  setStation(resourceId: string): Promise<void>
   setShuffleMode(mode: PlaybackShuffleMode): Promise<void>
   setRepeatMode(mode: PlaybackRepeatMode): Promise<void>
   click(control: PlaybackProbeControl): Promise<void>
@@ -342,6 +324,7 @@ type PlaybackPageGlobal = typeof globalThis & {
       musicUserToken: string,
     ): Promise<{ authorized: boolean }>
     setQueue(resourceIds: readonly string[]): void
+    setStation(resourceId: string): void
     setShuffleMode(mode: PlaybackShuffleMode): void
     setRepeatMode(mode: PlaybackRepeatMode): void
     snapshot(): PlaybackProbeSnapshot
@@ -444,6 +427,12 @@ class PuppeteerPlaybackBrowser implements PlaybackProbeBrowser {
     }, [...resourceIds])
   }
 
+  async setStation(resourceId: string): Promise<void> {
+    await this.page.evaluate((id) => {
+      ;(globalThis as PlaybackPageGlobal).__nutkaPlayback.setStation(id)
+    }, resourceId)
+  }
+
   async setShuffleMode(mode: PlaybackShuffleMode): Promise<void> {
     await this.page.evaluate((value) => {
       ;(globalThis as PlaybackPageGlobal).__nutkaPlayback.setShuffleMode(value)
@@ -517,9 +506,13 @@ async function detectChromiumAudioSink(browserProcessId: number | null): Promise
     stdout: "pipe",
     stderr: "ignore",
   })
-  const output = new Uint8Array(await new Response(child.stdout).arrayBuffer())
-  const exitCode = await child.exited
-  if (exitCode !== 0 || output.byteLength > MAX_PACTL_OUTPUT_BYTES) return false
+  const result = await readBoundedProcessOutput(
+    child,
+    MAX_PACTL_OUTPUT_BYTES,
+    PACTL_TIMEOUT_MS,
+  )
+  if (!result || result.exitCode !== 0) return false
+  const output = result.output
 
   let inputs: unknown
   try {
@@ -538,6 +531,63 @@ async function detectChromiumAudioSink(browserProcessId: number | null): Promise
     }
   }
   return false
+}
+
+export interface BoundedOutputProcess {
+  readonly stdout: ReadableStream<Uint8Array>
+  readonly exited: Promise<number>
+  kill(signal?: number | string): void
+}
+
+export async function readBoundedProcessOutput(
+  child: BoundedOutputProcess,
+  maximumBytes: number,
+  timeoutMs: number,
+): Promise<{ output: Uint8Array; exitCode: number } | null> {
+  const operation = (async () => {
+    const output = await readBoundedStream(child.stdout, maximumBytes)
+    if (!output) {
+      child.kill()
+      return null
+    }
+    return { output, exitCode: await child.exited }
+  })().catch(() => null)
+  const result = await Promise.race([
+    operation,
+    Bun.sleep(timeoutMs).then(() => null),
+  ])
+  if (!result) child.kill()
+  return result
+}
+
+async function readBoundedStream(
+  stream: ReadableStream<Uint8Array>,
+  maximumBytes: number,
+): Promise<Uint8Array | null> {
+  const reader = stream.getReader()
+  const chunks: Uint8Array[] = []
+  let length = 0
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      length += value.byteLength
+      if (length > maximumBytes) {
+        await reader.cancel()
+        return null
+      }
+      chunks.push(value)
+    }
+  } finally {
+    reader.releaseLock()
+  }
+  const output = new Uint8Array(length)
+  let offset = 0
+  for (const chunk of chunks) {
+    output.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return output
 }
 
 export function applePlaybackProfilePath(

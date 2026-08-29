@@ -4,6 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import type {
+  AppleCatalogStation,
   AppleCatalogTrack,
   PlaybackRepeatMode,
   PlaybackShuffleMode,
@@ -17,6 +18,7 @@ import {
   ApplePlaybackController,
   type PlaybackWorkerClient,
 } from "./apple-playback"
+import type { PlaybackLogger } from "./playback-log"
 
 const tracks = [
   appleTrack("one", "1"),
@@ -33,6 +35,12 @@ class FakeWorker implements PlaybackWorkerClient {
     musicUserToken: string
   }
   plays: Array<{ loadId: number; tracks: readonly PlaybackWorkerTrack[] }> = []
+  stations: Array<{
+    loadId: number
+    stationResourceId: string
+    title: string
+    isLive: boolean
+  }> = []
   pauseCount = 0
   resumeCount = 0
   previousCount = 0
@@ -66,6 +74,16 @@ class FakeWorker implements PlaybackWorkerClient {
 
   async play(loadId: number, workerTracks: readonly PlaybackWorkerTrack[]): Promise<void> {
     this.plays.push({ loadId, tracks: workerTracks })
+    await this.playGate
+  }
+
+  async playStation(
+    loadId: number,
+    stationResourceId: string,
+    title: string,
+    isLive: boolean,
+  ): Promise<void> {
+    this.stations.push({ loadId, stationResourceId, title, isLive })
     await this.playGate
   }
 
@@ -109,32 +127,71 @@ class FakeWorker implements PlaybackWorkerClient {
       | "type"
       | "queueResourceIds"
       | "queuePosition"
+      | "currentItem"
+      | "queueItems"
+      | "source"
+      | "dynamicQueue"
       | "shuffleMode"
       | "repeatMode"
       | "canSetShuffleMode"
       | "canSetRepeatMode"
+      | "canSeek"
+      | "canSkipNext"
+      | "canSkipPrevious"
     > & Partial<Pick<
       Extract<PlaybackWorkerResponse, { type: "snapshot" }>,
       | "queueResourceIds"
       | "queuePosition"
+      | "currentItem"
+      | "queueItems"
+      | "source"
+      | "dynamicQueue"
       | "shuffleMode"
       | "repeatMode"
       | "canSetShuffleMode"
       | "canSetRepeatMode"
+      | "canSeek"
+      | "canSkipNext"
+      | "canSkipPrevious"
     >>,
   ): void {
     const queueResourceIds = snapshot.queueResourceIds ?? this.plays
       .find((play) => play.loadId === snapshot.loadId)
       ?.tracks.map((track) => track.resourceId) ?? []
+    const queuePosition = snapshot.queuePosition ?? queueResourceIds.indexOf(snapshot.resourceId ?? "")
     this.onSnapshot({
       type: "snapshot",
       ...snapshot,
       queueResourceIds,
-      queuePosition: snapshot.queuePosition ?? queueResourceIds.indexOf(snapshot.resourceId ?? ""),
+      currentItem: snapshot.currentItem ?? (snapshot.resourceId ? {
+        resourceId: snapshot.resourceId,
+        title: null,
+        artist: null,
+        album: null,
+        durationSeconds: snapshot.durationSeconds,
+      } : null),
+      queueItems: snapshot.queueItems ?? queueResourceIds.map((resourceId) => ({
+        resourceId,
+        title: null,
+        artist: null,
+        album: null,
+        durationSeconds: null,
+      })),
+      queuePosition,
+      source: snapshot.source ?? (snapshot.loadId === null ? null : { type: "finite" }),
+      dynamicQueue: snapshot.dynamicQueue ?? false,
       shuffleMode: snapshot.shuffleMode ?? "off",
       repeatMode: snapshot.repeatMode ?? "none",
       canSetShuffleMode: snapshot.canSetShuffleMode ?? true,
       canSetRepeatMode: snapshot.canSetRepeatMode ?? true,
+      canSeek: snapshot.canSeek ?? true,
+      canSkipNext: snapshot.canSkipNext ?? (
+        queuePosition >= 0 && queuePosition < queueResourceIds.length - 1 ||
+        snapshot.repeatMode === "all" || snapshot.repeatMode === "one"
+      ),
+      canSkipPrevious: snapshot.canSkipPrevious ?? (
+        queuePosition > 0 || snapshot.repeatMode === "all" || snapshot.repeatMode === "one"
+      ),
     })
   }
 
@@ -150,6 +207,161 @@ class FakeWorker implements PlaybackWorkerClient {
 }
 
 describe("ApplePlaybackController", () => {
+  test("publishes generated station songs and keeps next available with an empty queue", async () => {
+    const { controller, workers } = setupController()
+    const station = appleStation(false)
+    await controller.playStation(station)
+    const worker = workers[0]!
+    expect(worker.stations).toEqual([{
+      loadId: 1,
+      stationResourceId: "ra.123",
+      title: "Discovery Station",
+      isLive: false,
+    }])
+    expect(controller.snapshot.status).toBe("idle")
+
+    worker.emit({
+      loadId: 1,
+      resourceId: "generated-song",
+      queueResourceIds: [],
+      queuePosition: -1,
+      currentItem: {
+        resourceId: "generated-song",
+        title: "A Generated Song",
+        artist: "A Generated Artist",
+        album: null,
+        durationSeconds: 201,
+      },
+      queueItems: [],
+      source: {
+        type: "station",
+        stationId: "ra.123",
+        title: "Discovery Station",
+        isLive: false,
+      },
+      dynamicQueue: true,
+      status: "playing",
+      positionSeconds: 3,
+      durationSeconds: 201,
+      errorCode: null,
+      audioQuality: null,
+      canSeek: true,
+      canSkipNext: true,
+      canSkipPrevious: false,
+    })
+
+    expect(controller.snapshot).toMatchObject({
+      source: {
+        type: "station",
+        id: "ra.123",
+        title: "Discovery Station",
+        isLive: false,
+      },
+      dynamicQueue: true,
+      queue: [],
+      currentTrack: {
+        id: "apple:song:generated-song",
+        title: "A Generated Song",
+        artist: "A Generated Artist",
+        album: "Discovery Station",
+        durationSeconds: 201,
+        apple: {
+          resourceId: "generated-song",
+          resourceType: "songs",
+          playParams: { id: "generated-song", kind: "song" },
+        },
+      },
+    })
+    await controller.next()
+    await controller.previous()
+    expect(worker.nextCount).toBe(1)
+    expect(worker.previousCount).toBe(0)
+    await controller.dispose()
+  })
+
+  test("plays catalog stations without optional play parameters and logs confirmation", async () => {
+    const events: Array<{ event: string; code?: string; resourceId?: string }> = []
+    const { controller, workers } = setupController({
+      logger: {
+        log: (event, details) => events.push({ event, ...details }),
+      },
+    })
+    const station = appleStation(false)
+    delete station.apple.playParams
+
+    await controller.playStation(station)
+
+    expect(workers[0]!.stations).toEqual([{
+      loadId: 1,
+      stationResourceId: "ra.123",
+      title: "Discovery Station",
+      isLive: false,
+    }])
+    expect(events).toEqual([
+      { event: "station_play_requested", resourceId: "ra.123" },
+      { event: "station_play_confirmed", resourceId: "ra.123" },
+    ])
+    await controller.dispose()
+  })
+
+  test("rejects known unavailable external live streams without starting the worker", async () => {
+    const events: Array<{ event: string; code?: string; resourceId?: string }> = []
+    const { controller, workers } = setupController({
+      logger: {
+        log: (event, details) => events.push({ event, ...details }),
+      },
+    })
+    const station = appleStation(true)
+    station.apple.externalLiveStream = true
+
+    await expect(controller.playStation(station)).rejects.toMatchObject({
+      code: "external_station_unsupported",
+    })
+
+    expect(workers).toHaveLength(0)
+    expect(controller.snapshot.errorCode).toBe("external_station_unsupported")
+    expect(events.at(-1)).toEqual({
+      event: "station_play_failed",
+      resourceId: "ra.123",
+      code: "external_station_unsupported",
+    })
+    await controller.dispose()
+  })
+
+  test("gates live station transport using confirmed conservative capabilities", async () => {
+    const { controller, workers } = setupController()
+    await controller.playStation(appleStation(true))
+    const worker = workers[0]!
+    worker.emit({
+      loadId: 1,
+      resourceId: "live-song",
+      queueResourceIds: [],
+      queuePosition: -1,
+      source: {
+        type: "station",
+        stationId: "ra.123",
+        title: "Discovery Station",
+        isLive: true,
+      },
+      dynamicQueue: true,
+      status: "playing",
+      positionSeconds: 3,
+      durationSeconds: null,
+      errorCode: null,
+      audioQuality: null,
+      canSeek: false,
+      canSkipNext: false,
+      canSkipPrevious: false,
+    })
+    await controller.seek(20)
+    await controller.next()
+    await controller.previous()
+    expect(worker.nextCount).toBe(0)
+    expect(worker.previousCount).toBe(0)
+    expect(controller.snapshot.dynamicQueue).toBe(true)
+    await controller.dispose()
+  })
+
   test("maps worker-confirmed resource IDs back to tracks without optimistic state", async () => {
     const { controller, workers } = setupController()
     const snapshots: string[] = []
@@ -241,6 +453,38 @@ describe("ApplePlaybackController", () => {
     await controller.setRepeatMode("all")
     expect(worker.repeatModeChanges).toEqual(["all"])
     expect(controller.snapshot.repeatMode).toBe("none")
+    await controller.dispose()
+  })
+
+  test("preserves unknown finite-queue items and their queue positions", async () => {
+    const { controller, workers } = setupController()
+    await controller.play(tracks[0], tracks.slice(1))
+    const worker = workers[0]!
+    worker.emit({
+      loadId: 1,
+      resourceId: "generated",
+      queueResourceIds: ["1", "generated", "3"],
+      queuePosition: 1,
+      currentItem: {
+        resourceId: "generated",
+        title: "Generated Song",
+        artist: "Generated Artist",
+        album: "Generated Album",
+        durationSeconds: 210,
+      },
+      status: "playing",
+      positionSeconds: 4,
+      durationSeconds: 210,
+      errorCode: null,
+      audioQuality: null,
+    })
+
+    expect(controller.snapshot.currentTrack).toMatchObject({
+      id: "apple:song:generated",
+      title: "Generated Song",
+      artist: "Generated Artist",
+    })
+    expect(controller.snapshot.queue).toEqual([tracks[2]])
     await controller.dispose()
   })
 
@@ -579,11 +823,53 @@ describe("ApplePlaybackController", () => {
       repeatMode: "none",
       canSetShuffleMode: false,
       canSetRepeatMode: false,
+      source: null,
+      dynamicQueue: false,
+      canSeek: false,
+      canSkipNext: false,
+      canSkipPrevious: false,
     })
 
     await controller.play(tracks[1], [])
     expect(workers).toHaveLength(2)
     expect(workers[1]!.plays[0]?.tracks[0]?.resourceId).toBe("2")
+    await controller.dispose()
+  })
+
+  test("ignores delayed callbacks from a replaced crashed worker", async () => {
+    const { controller, workers } = setupController()
+    await controller.play(tracks[0], [])
+    const firstWorker = workers[0]!
+    firstWorker.exit()
+
+    await controller.play(tracks[1], [])
+    const replacement = workers[1]!
+    replacement.emit({
+      loadId: 2,
+      resourceId: "2",
+      status: "playing",
+      positionSeconds: 8,
+      durationSeconds: 180,
+      errorCode: null,
+      audioQuality: null,
+    })
+    firstWorker.emit({
+      loadId: 1,
+      resourceId: "1",
+      status: "playing",
+      positionSeconds: 40,
+      durationSeconds: 180,
+      errorCode: null,
+      audioQuality: null,
+    })
+    firstWorker.exit("late_worker_exit")
+
+    expect(controller.snapshot).toMatchObject({
+      status: "playing",
+      currentTrack: tracks[1],
+      positionSeconds: 8,
+      errorCode: null,
+    })
     await controller.dispose()
   })
 
@@ -611,6 +897,11 @@ describe("ApplePlaybackController", () => {
       repeatMode: "none",
       canSetShuffleMode: false,
       canSetRepeatMode: false,
+      source: null,
+      dynamicQueue: false,
+      canSeek: false,
+      canSkipNext: false,
+      canSkipPrevious: false,
     })
     await controller.dispose()
   })
@@ -696,7 +987,61 @@ describe("ApplePlaybackController", () => {
       repeatMode: "none",
       canSetShuffleMode: false,
       canSetRepeatMode: false,
+      source: null,
+      dynamicQueue: false,
+      canSeek: false,
+      canSkipNext: false,
+      canSkipPrevious: false,
     })
+    await controller.dispose()
+  })
+
+  test("rejects a delayed successful command from a disconnected worker", async () => {
+    let releasePlay!: () => void
+    const gate = new Promise<void>((resolve) => (releasePlay = resolve))
+    const { controller, workers } = setupController({ playGate: gate })
+    const playing = controller.play(tracks[0], [])
+    while (workers[0]?.plays.length !== 1) await Bun.sleep(0)
+
+    await controller.disconnect()
+    releasePlay()
+
+    await expect(playing).rejects.toMatchObject({ code: "worker_disconnected" })
+    expect(controller.snapshot).toEqual({
+      status: "idle",
+      currentTrack: null,
+      queue: [],
+      positionSeconds: 0,
+      durationSeconds: null,
+      errorCode: null,
+      shuffleMode: "off",
+      repeatMode: "none",
+      canSetShuffleMode: false,
+      canSetRepeatMode: false,
+      source: null,
+      dynamicQueue: false,
+      canSeek: false,
+      canSkipNext: false,
+      canSkipPrevious: false,
+    })
+    await controller.dispose()
+  })
+
+  test("records sanitized diagnostics for swallowed listener failures", async () => {
+    const entries: Array<{ event: string; code?: string }> = []
+    const { controller } = setupController({
+      logger: {
+        log(event, details) {
+          entries.push({ event, ...(details?.code ? { code: details.code } : {}) })
+        },
+      },
+    })
+    controller.subscribe(() => {
+      throw new Error("private listener details")
+    })
+
+    expect(entries).toEqual([{ event: "snapshot_listener_failed", code: "control_failed" }])
+    expect(JSON.stringify(entries)).not.toContain("private listener details")
     await controller.dispose()
   })
 })
@@ -705,6 +1050,7 @@ function setupController(overrides: {
   profilePath?: string
   playGate?: Promise<void>
   removeProfile?: (profilePath: string) => Promise<void>
+  logger?: PlaybackLogger
 } = {}): {
   controller: ApplePlaybackController
   workers: FakeWorker[]
@@ -715,6 +1061,7 @@ function setupController(overrides: {
     executablePath: "/test/chromium",
     profilePath: overrides.profilePath ?? "/test/profile",
     removeProfile: overrides.removeProfile,
+    logger: overrides.logger,
     fetch: async () => Response.json({
       token: "developer-token",
       expiresAt: "2030-01-01T00:00:00.000Z",
@@ -742,6 +1089,20 @@ function appleTrack(name: string, resourceId: string): AppleCatalogTrack {
       resourceId,
       resourceType: "songs",
       playParams: { id: resourceId, kind: "song" },
+    },
+  }
+}
+
+function appleStation(isLive: boolean): AppleCatalogStation {
+  return {
+    id: "apple:station:ra.123",
+    title: "Discovery Station",
+    isLive,
+    apple: {
+      resourceId: "ra.123",
+      resourceType: "stations",
+      playParams: { id: "ra.123", kind: "radioStation" },
+      artwork: { url: "https://example.test/artwork", width: 100, height: 100 },
     },
   }
 }

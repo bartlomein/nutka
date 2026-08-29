@@ -4,9 +4,11 @@ export type CommandId =
   | "home"
   | "library"
   | "playlists"
+  | "radio"
   | "search"
   | "queue"
   | "browse-now-playing"
+  | "station-from-song"
   | "album"
   | "info"
   | "filter"
@@ -17,6 +19,8 @@ export type CommandId =
   | "shuffle"
   | "repeat"
   | "like"
+  | "favorite-station"
+  | "like-station"
   | "visualizer"
   | "visualizer-settings"
   | "help"
@@ -36,19 +40,24 @@ export interface CommandAvailability {
   readonly canOpenAlbum: boolean
   readonly canOpenInfo: boolean
   readonly canBrowseNowPlaying: boolean
+  readonly canStartSongStation: boolean
   readonly canFilter: boolean
   readonly canSetShuffleMode: boolean
   readonly canSetRepeatMode: boolean
   readonly canToggleCurrentSongLike: boolean
+  readonly canToggleSelectedStationFavorite: boolean
+  readonly canToggleSelectedStationLike: boolean
 }
 
 export const commands: readonly Command[] = [
   { id: "home", title: "Go to Home", description: "Browse personalized recommendations", shortcut: "g h", keywords: "home personalized recommendations for you" },
   { id: "library", title: "Go to Library", description: "Browse saved tracks", shortcut: "g l", keywords: "library tracks browse saved" },
   { id: "playlists", title: "Go to Playlists", description: "Browse saved playlists", shortcut: "g p", keywords: "playlists saved library" },
+  { id: "radio", title: "Go to Radio", description: "Listen to personal and live stations", shortcut: "g r", keywords: "radio station live personal recent" },
   { id: "search", title: "Search music", description: "Find title, artist, or album", shortcut: "g s", keywords: "search find catalog music" },
   { id: "queue", title: "Go to Queue", description: "See what plays next", shortcut: "g q", keywords: "queue upcoming next" },
-  { id: "browse-now-playing", title: "Browse Now Playing", description: "Open the current album or artist", shortcut: "g n", keywords: "now playing current song album artist context browse" },
+  { id: "browse-now-playing", title: "Browse Now Playing", description: "Open album, artist, or station actions", shortcut: "g n", keywords: "now playing current song album artist station radio context browse" },
+  { id: "station-from-song", title: "Start Station from Current Song", description: "Create a radio station from the confirmed song", shortcut: "", keywords: "radio station current now playing song" },
   { id: "filter", title: "Filter current list", description: "Narrow visible tracks", shortcut: "/", keywords: "filter current list narrow" },
   { id: "info", title: "Show Item Info", description: "Inspect the selected item", shortcut: "i", keywords: "info details metadata selected track album playlist" },
   { id: "album", title: "Go to Album", description: "Open the selected song's album", shortcut: "a", keywords: "album release selected song open" },
@@ -59,6 +68,8 @@ export const commands: readonly Command[] = [
   { id: "shuffle", title: "Toggle Shuffle", description: "Shuffle or restore the current queue order", shortcut: "s", keywords: "shuffle random playback mode queue order" },
   { id: "repeat", title: "Cycle Repeat Mode", description: "Repeat off, all songs, or one song", shortcut: "r", keywords: "repeat loop all one song playback mode" },
   { id: "like", title: "Toggle Current Song Like", description: "Like or unlike the song playing now", shortcut: "l", keywords: "like unlike love heart current now playing song rating" },
+  { id: "favorite-station", title: "Toggle Station Favorite", description: "Save or remove the selected station in Nutka", shortcut: "f", keywords: "favorite favourite station radio save remove local" },
+  { id: "like-station", title: "Toggle Station Like", description: "Change Apple Music recommendations for the selected station", shortcut: "", keywords: "like unlike station radio apple recommendations rating" },
   { id: "visualizer", title: "Toggle visualizer", description: "Show or hide audio visualization", shortcut: "v", keywords: "visualizer spectrum audio show hide toggle" },
   { id: "visualizer-settings", title: "Visualizer settings", description: "Choose visualization, style, palette, and height", shortcut: "shift+v", keywords: "visualizer settings configure style palette color height" },
   { id: "help", title: "Keyboard help", description: "Show all shortcuts", shortcut: "?", keywords: "help keyboard shortcuts keys" },
@@ -73,10 +84,15 @@ export function getPaletteCommands(
     if (command.id === "album") return availability.canOpenAlbum
     if (command.id === "info") return availability.canOpenInfo
     if (command.id === "browse-now-playing") return availability.canBrowseNowPlaying
+    if (command.id === "station-from-song") return availability.canStartSongStation
     if (command.id === "filter") return availability.canFilter
     if (command.id === "shuffle") return availability.canSetShuffleMode
     if (command.id === "repeat") return availability.canSetRepeatMode
     if (command.id === "like") return availability.canToggleCurrentSongLike
+    if (command.id === "favorite-station") {
+      return availability.canToggleSelectedStationFavorite
+    }
+    if (command.id === "like-station") return availability.canToggleSelectedStationLike
     const status = availability.appleAuthStatus
     if (command.id === "apple-sign-in") {
       if (!availability.canAppleAuth) return false

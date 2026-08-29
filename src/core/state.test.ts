@@ -39,6 +39,7 @@ describe("createInitialState", () => {
         home: { selectedTrackId: null, filter: "" },
         library: { selectedTrackId: "a", filter: "" },
         playlists: { selectedTrackId: null, filter: "" },
+        radio: { selectedTrackId: null, filter: "" },
         search: { selectedTrackId: null, filter: "" },
         queue: { selectedTrackId: null, filter: "" },
       },
@@ -53,6 +54,11 @@ describe("createInitialState", () => {
         repeatMode: "none",
         canSetShuffleMode: false,
         canSetRepeatMode: false,
+        source: null,
+        dynamicQueue: false,
+        canSeek: false,
+        canSkipNext: false,
+        canSkipPrevious: false,
       },
     })
   })
@@ -360,6 +366,11 @@ describe("playback", () => {
       repeatMode: "all",
       canSetShuffleMode: true,
       canSetRepeatMode: true,
+      source: { type: "station", id: "radio", title: "Discovery", isLive: false },
+      dynamicQueue: true,
+      canSeek: false,
+      canSkipNext: true,
+      canSkipPrevious: true,
     })
     upcoming.push("later")
 
@@ -374,6 +385,11 @@ describe("playback", () => {
       repeatMode: "all",
       canSetShuffleMode: true,
       canSetRepeatMode: true,
+      source: { type: "station", id: "radio", title: "Discovery", isLive: false },
+      dynamicQueue: true,
+      canSeek: false,
+      canSkipNext: true,
+      canSkipPrevious: true,
     })
     expect(playing.lists.queue.selectedTrackId).toBe("b")
   })
@@ -398,6 +414,11 @@ describe("playback", () => {
       repeatMode: "none" as const,
       canSetShuffleMode: true,
       canSetRepeatMode: true,
+      source: null,
+      dynamicQueue: false,
+      canSeek: true,
+      canSkipNext: true,
+      canSkipPrevious: true,
     })
 
     expect(playing.lists.queue).toEqual({
@@ -445,6 +466,11 @@ describe("playback", () => {
       repeatMode: "one",
       canSetShuffleMode: true,
       canSetRepeatMode: true,
+      source: null,
+      dynamicQueue: false,
+      canSeek: true,
+      canSkipNext: true,
+      canSkipPrevious: true,
     })
   })
 

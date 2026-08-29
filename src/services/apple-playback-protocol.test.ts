@@ -45,7 +45,20 @@ describe("Apple playback worker protocol", () => {
       loadId: 2,
       resourceId: "123",
       queueResourceIds: ["123", "456"],
+      currentItem: {
+        resourceId: "123",
+        title: "Song",
+        artist: "Artist",
+        album: "Album",
+        durationSeconds: 180,
+      },
+      queueItems: [
+        { resourceId: "123", title: "Song", artist: "Artist", album: "Album", durationSeconds: 180 },
+        { resourceId: "456", title: null, artist: null, album: null, durationSeconds: null },
+      ],
       queuePosition: 0,
+      source: { type: "finite" as const },
+      dynamicQueue: false,
       status: "playing" as const,
       positionSeconds: 4,
       durationSeconds: 180,
@@ -59,8 +72,39 @@ describe("Apple playback worker protocol", () => {
       repeatMode: "all" as const,
       canSetShuffleMode: true,
       canSetRepeatMode: true,
+      canSeek: true,
+      canSkipNext: true,
+      canSkipPrevious: false,
     }
     expect(decodePlaybackWorkerResponse(encodePlaybackMessage(response).trim())).toEqual(response)
+  })
+
+  test("accepts bounded station loads and rejects unsafe station data", () => {
+    const request = {
+      type: "play-station" as const,
+      requestId: 7,
+      loadId: 9,
+      stationResourceId: "ra.123",
+      title: "Discovery Station",
+      isLive: false,
+    }
+    expect(decodePlaybackWorkerRequest(encodePlaybackMessage(request).trim())).toEqual(request)
+    expect(decodePlaybackWorkerRequest(JSON.stringify({
+      ...request,
+      stationResourceId: "bad/id",
+    }))).toBeNull()
+    expect(decodePlaybackWorkerRequest(JSON.stringify({
+      ...request,
+      title: "x".repeat(513),
+    }))).toBeNull()
+    expect(decodePlaybackWorkerRequest(JSON.stringify({
+      ...request,
+      isLive: "false",
+    }))).toBeNull()
+    expect(decodePlaybackWorkerRequest(JSON.stringify({
+      ...request,
+      developerToken: "must-not-be-accepted",
+    }))).toBeNull()
   })
 
   test("rejects malformed, oversized, and unsafe messages", () => {
@@ -95,7 +139,11 @@ describe("Apple playback worker protocol", () => {
       loadId: 1,
       resourceId: "123",
       queueResourceIds: ["123"],
+      currentItem: null,
+      queueItems: [],
       queuePosition: 1,
+      source: { type: "finite" },
+      dynamicQueue: false,
       status: "playing",
       positionSeconds: 0,
       durationSeconds: 1,
@@ -105,6 +153,9 @@ describe("Apple playback worker protocol", () => {
       repeatMode: "none",
       canSetShuffleMode: true,
       canSetRepeatMode: true,
+      canSeek: true,
+      canSkipNext: false,
+      canSkipPrevious: false,
     }))).toBeNull()
   })
 

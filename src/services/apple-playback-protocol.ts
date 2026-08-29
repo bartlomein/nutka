@@ -5,12 +5,56 @@ import type {
 } from "../core/types"
 
 export const MAX_PLAYBACK_MESSAGE_BYTES = 64 * 1024
+export const MAX_PLAYBACK_QUEUE_ITEMS = 100
+export const MAX_PLAYBACK_METADATA_LENGTH = 512
+export const MAX_PLAYBACK_RESOURCE_ID_LENGTH = 128
+export const PLAYBACK_DYNAMIC_QUEUE_WINDOW = 25
 export const PLAYBACK_SPECTRUM_BAND_COUNT = 64
 
 export interface PlaybackWorkerTrack {
   trackId: string
   resourceId: string
 }
+
+export interface PlaybackWorkerItem {
+  resourceId: string
+  title: string | null
+  artist: string | null
+  album: string | null
+  durationSeconds: number | null
+}
+
+export interface PlaybackBrowserSnapshot {
+  initialized: boolean
+  authorized?: boolean
+  isPlaying?: boolean
+  playbackState?: number | null
+  positionSeconds?: number
+  durationSeconds?: number | null
+  resourceId?: string | null
+  title?: string | null
+  artist?: string | null
+  album?: string | null
+  currentItem?: PlaybackWorkerItem | null
+  queueItems?: readonly PlaybackWorkerItem[]
+  queueResourceIds?: readonly string[]
+  queuePosition?: number
+  shuffleMode?: PlaybackShuffleMode
+  repeatMode?: PlaybackRepeatMode
+  canSetShuffleMode?: boolean
+  canSetRepeatMode?: boolean
+  canSeek?: boolean
+  canSkipNext?: boolean
+  canSkipPrevious?: boolean
+  lastErrorCode?: string | null
+  commandSequence?: number
+  completedCommandSequence?: number
+  audioQuality?: AudioQuality | null
+}
+
+export type PlaybackWorkerSource =
+  | { type: "finite" }
+  | { type: "station"; stationId: string; title: string; isLive: boolean }
 
 export type PlaybackWorkerRequest =
   | {
@@ -27,6 +71,14 @@ export type PlaybackWorkerRequest =
       requestId: number
       loadId: number
       tracks: readonly PlaybackWorkerTrack[]
+    }
+  | {
+      type: "play-station"
+      requestId: number
+      loadId: number
+      stationResourceId: string
+      title: string
+      isLive: boolean
     }
   | { type: "set-audio-analysis-enabled"; requestId: number; enabled: boolean }
   | { type: "set-shuffle-mode"; requestId: number; mode: PlaybackShuffleMode }
@@ -47,7 +99,11 @@ export type PlaybackWorkerResponse =
       loadId: number | null
       resourceId: string | null
       queueResourceIds: readonly string[]
+      currentItem: PlaybackWorkerItem | null
+      queueItems: readonly PlaybackWorkerItem[]
       queuePosition: number
+      source: PlaybackWorkerSource | null
+      dynamicQueue: boolean
       status: "idle" | "playing" | "paused"
       positionSeconds: number
       durationSeconds: number | null
@@ -57,6 +113,9 @@ export type PlaybackWorkerResponse =
       repeatMode: PlaybackRepeatMode
       canSetShuffleMode: boolean
       canSetRepeatMode: boolean
+      canSeek: boolean
+      canSkipNext: boolean
+      canSkipPrevious: boolean
     }
   | {
       type: "spectrum"
@@ -86,8 +145,25 @@ export function decodePlaybackWorkerRequest(line: string): PlaybackWorkerRequest
     return value as unknown as PlaybackWorkerRequest
   }
   if (value.type === "play") {
-    if (!isSafeInteger(value.loadId) || !Array.isArray(value.tracks) || value.tracks.length === 0 || value.tracks.length > 100) return null
+    if (!isSafeInteger(value.loadId) || !Array.isArray(value.tracks) || value.tracks.length === 0 || value.tracks.length > MAX_PLAYBACK_QUEUE_ITEMS) return null
     if (value.tracks.some((track) => !isWorkerTrack(track))) return null
+    return value as unknown as PlaybackWorkerRequest
+  }
+  if (value.type === "play-station") {
+    if (
+      !hasOnlyKeys(value, [
+        "type",
+        "requestId",
+        "loadId",
+        "stationResourceId",
+        "title",
+        "isLive",
+      ]) ||
+      !isSafeInteger(value.loadId) ||
+      !isResourceId(value.stationResourceId) ||
+      !isSafeText(value.title, MAX_PLAYBACK_METADATA_LENGTH, false) ||
+      typeof value.isLive !== "boolean"
+    ) return null
     return value as unknown as PlaybackWorkerRequest
   }
   if (value.type === "seek") {
@@ -125,7 +201,11 @@ export function decodePlaybackWorkerResponse(line: string): PlaybackWorkerRespon
       !(value.loadId === null || isSafeInteger(value.loadId)) ||
       !(value.resourceId === null || isResourceId(value.resourceId)) ||
       !isResourceIdArray(value.queueResourceIds) ||
+      !(value.currentItem === null || isWorkerItem(value.currentItem)) ||
+      !isWorkerItemArray(value.queueItems) ||
       !isQueuePosition(value.queuePosition, value.queueResourceIds) ||
+      !(value.source === null || isWorkerSource(value.source)) ||
+      typeof value.dynamicQueue !== "boolean" ||
       !["idle", "playing", "paused"].includes(String(value.status)) ||
       !isFiniteNonNegative(value.positionSeconds) ||
       !(value.durationSeconds === null || isFiniteNonNegative(value.durationSeconds)) ||
@@ -134,7 +214,10 @@ export function decodePlaybackWorkerResponse(line: string): PlaybackWorkerRespon
       !isShuffleMode(value.shuffleMode) ||
       !isRepeatMode(value.repeatMode) ||
       typeof value.canSetShuffleMode !== "boolean" ||
-      typeof value.canSetRepeatMode !== "boolean"
+      typeof value.canSetRepeatMode !== "boolean" ||
+      typeof value.canSeek !== "boolean" ||
+      typeof value.canSkipNext !== "boolean" ||
+      typeof value.canSkipPrevious !== "boolean"
     ) return null
     return value as unknown as PlaybackWorkerResponse
   }
@@ -204,12 +287,38 @@ function isWorkerTrack(value: unknown): value is PlaybackWorkerTrack {
   return isNonEmptyString(track.trackId, 256) && isResourceId(track.resourceId)
 }
 
+function isWorkerItem(value: unknown): value is PlaybackWorkerItem {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false
+  const item = value as Record<string, unknown>
+  return isResourceId(item.resourceId) &&
+    isNullableString(item.title, MAX_PLAYBACK_METADATA_LENGTH) &&
+    isNullableString(item.artist, MAX_PLAYBACK_METADATA_LENGTH) &&
+    isNullableString(item.album, MAX_PLAYBACK_METADATA_LENGTH) &&
+    (item.durationSeconds === null || isFiniteNonNegative(item.durationSeconds))
+}
+
+function isWorkerItemArray(value: unknown): value is PlaybackWorkerItem[] {
+  return Array.isArray(value) && value.length <= MAX_PLAYBACK_QUEUE_ITEMS && value.every(isWorkerItem)
+}
+
+function isWorkerSource(value: unknown): value is PlaybackWorkerSource {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false
+  const source = value as Record<string, unknown>
+  if (source.type === "finite") return true
+  return source.type === "station" &&
+    isResourceId(source.stationId) &&
+    isSafeText(source.title, MAX_PLAYBACK_METADATA_LENGTH, false) &&
+    typeof source.isLive === "boolean"
+}
+
 function isResourceId(value: unknown): value is string {
-  return typeof value === "string" && /^[A-Za-z0-9._-]{1,128}$/.test(value)
+  return typeof value === "string" &&
+    value.length <= MAX_PLAYBACK_RESOURCE_ID_LENGTH &&
+    /^[A-Za-z0-9._-]+$/.test(value)
 }
 
 function isResourceIdArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.length <= 100 && value.every(isResourceId)
+  return Array.isArray(value) && value.length <= MAX_PLAYBACK_QUEUE_ITEMS && value.every(isResourceId)
 }
 
 function isQueuePosition(value: unknown, resourceIds: string[]): value is number {
@@ -235,8 +344,24 @@ function isNonEmptyString(value: unknown, maximumLength: number): value is strin
   return typeof value === "string" && value.length > 0 && value.length <= maximumLength
 }
 
+function isNullableString(value: unknown, maximumLength: number): value is string | null {
+  return value === null || isSafeText(value, maximumLength, true)
+}
+
+function isSafeText(value: unknown, maximumLength: number, allowEmpty: boolean): value is string {
+  return typeof value === "string" &&
+    (allowEmpty || value.length > 0) &&
+    value.length <= maximumLength &&
+    !/[\u0000-\u001f\u007f]/.test(value)
+}
+
 function isSafeInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+}
+
+function hasOnlyKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  const allowed = new Set(keys)
+  return Object.keys(value).every((key) => allowed.has(key))
 }
 
 function isFiniteNonNegative(value: unknown): value is number {

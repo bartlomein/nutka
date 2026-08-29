@@ -8,6 +8,8 @@ import type {
   AppleCatalogAlbum,
   AppleCatalogAlbumSummary,
   AppleCatalogArtist,
+  AppleCatalogStation,
+  AppleCatalogStationGenre,
   AppleCatalogPlaylist,
   AppleCatalogTrack,
   AppleHomeSection,
@@ -18,6 +20,7 @@ import type {
   PlaybackSnapshot,
   SearchOptions,
   SearchPage,
+  Station,
   Track,
 } from "../core/types"
 import { createNutkaApp, type NutkaApp } from "./app"
@@ -142,6 +145,20 @@ const testSongContext: AppleSongContext = {
   artists: testArtists,
 }
 
+function station(id: string, title: string, isLive = false): AppleCatalogStation {
+  return {
+    id: `apple:station:${id}`,
+    title,
+    isLive,
+    apple: {
+      resourceId: id,
+      resourceType: "stations",
+      playParams: { id, kind: "radioStation" },
+      artwork: { url: "https://example.test/artwork", width: 100, height: 100 },
+    },
+  }
+}
+
 function artistSectionPage(
   section: AppleArtistSectionName,
   nextCursor: string | null = null,
@@ -241,6 +258,7 @@ class FakePlaybackController implements PlaybackController<AppleCatalogTrack> {
     track: AppleCatalogTrack
     upcomingTracks: readonly AppleCatalogTrack[]
   }> = []
+  readonly stationPlays: Station[] = []
   pauseCount = 0
   resumeCount = 0
   previousCount = 0
@@ -278,6 +296,10 @@ class FakePlaybackController implements PlaybackController<AppleCatalogTrack> {
     upcomingTracks: readonly AppleCatalogTrack[],
   ): Promise<void> {
     this.plays.push({ track, upcomingTracks })
+  }
+
+  async playStation(station: Station): Promise<void> {
+    this.stationPlays.push(station)
   }
 
   async pause(): Promise<void> {
@@ -389,6 +411,41 @@ async function createApp(
       playlist: ApplePlaylist,
       options?: SearchOptions,
     ) => Promise<SearchPage<AppleCatalogTrack>>
+    getPersonalStation?: (
+      options?: Pick<SearchOptions, "signal">,
+    ) => Promise<AppleCatalogStation>
+    getLiveRadioStations?: (
+      options?: SearchOptions,
+    ) => Promise<SearchPage<AppleCatalogStation>>
+    getRecentlyPlayedStations?: (
+      options?: SearchOptions,
+    ) => Promise<SearchPage<AppleCatalogStation>>
+    getStationForResource?: (
+      resourceType: "songs" | "artists",
+      resourceId: string,
+      options?: Pick<SearchOptions, "signal">,
+    ) => Promise<AppleCatalogStation>
+    searchStations?: (
+      query: string,
+      options?: SearchOptions,
+    ) => Promise<SearchPage<AppleCatalogStation>>
+    getStationsByIds?: (
+      resourceIds: readonly string[],
+      options?: Pick<SearchOptions, "signal">,
+    ) => Promise<readonly AppleCatalogStation[]>
+    getStationGenres?: (
+      options?: Pick<SearchOptions, "signal">,
+    ) => Promise<readonly AppleCatalogStationGenre[]>
+    getStationsForGenre?: (
+      genreResourceId: string,
+      options?: SearchOptions,
+    ) => Promise<SearchPage<AppleCatalogStation>>
+    loadFavoriteStationIds?: (storefront: string) => readonly string[]
+    setStationFavorite?: (
+      storefront: string,
+      resourceId: string,
+      favorite: boolean,
+    ) => void
     getSongLiked?: (
       songResourceId: string,
       options?: Pick<SearchOptions, "signal">,
@@ -425,6 +482,16 @@ async function createApp(
     onGetHomeSections: options.getHomeSections,
     onGetLibraryPlaylists: options.getLibraryPlaylists,
     onGetPlaylistTracks: options.getPlaylistTracks,
+    onGetPersonalStation: options.getPersonalStation,
+    onGetLiveRadioStations: options.getLiveRadioStations,
+    onGetRecentlyPlayedStations: options.getRecentlyPlayedStations,
+    onGetStationForResource: options.getStationForResource,
+    onSearchStations: options.searchStations,
+    onGetStationsByIds: options.getStationsByIds,
+    onGetStationGenres: options.getStationGenres,
+    onGetStationsForGenre: options.getStationsForGenre,
+    onLoadFavoriteStationIds: options.loadFavoriteStationIds,
+    onSetStationFavorite: options.setStationFavorite,
     onGetSongLiked: options.getSongLiked,
     onSetSongLiked: options.setSongLiked,
     onQuit,
@@ -471,6 +538,419 @@ describe("Nutka TUI", () => {
     expect(frame).not.toContain("First Track")
     expect(frame).toContain("nothing playing")
     expect(frame).not.toContain("up next")
+  })
+
+  test("opens Radio with g r, renders ordered deduplicated sections, and starts a station", async () => {
+    const playback = new FakePlaybackController()
+    const personal = station("personal", "My Discovery Station")
+    const live = station("live", "Apple Music 1", true)
+    await createApp({
+      playback,
+      getPersonalStation: async () => personal,
+      getLiveRadioStations: async () => ({ items: [personal, live], nextCursor: null }),
+      getRecentlyPlayedStations: async () => ({ items: [live], nextCursor: null }),
+    })
+    app!.setAppleAuthStatus({ state: "signedIn", storefront: "us" })
+    setup!.mockInput.pressKey("g")
+    setup!.mockInput.pressKey("r")
+    await Bun.sleep(0)
+    await setup!.renderOnce()
+
+    const frame = setup!.captureCharFrame()
+    expect(app!.getState().destination).toBe("radio")
+    expect(frame.indexOf("MY STATION")).toBeLessThan(frame.indexOf("LIVE NOW"))
+    expect(frame.indexOf("LIVE NOW")).toBeLessThan(frame.indexOf("RECENTLY PLAYED"))
+    expect(frame.match(/My Discovery Station/g)).toHaveLength(1)
+    expect(frame.match(/Apple Music 1/g)).toHaveLength(1)
+
+    setup!.mockInput.pressEnter()
+    await Bun.sleep(0)
+    expect(playback.stationPlays).toEqual([personal])
+    expect(setup!.captureCharFrame()).toContain("nothing playing")
+
+    setup!.mockInput.pressArrow("down")
+    expect(app!.getState().lists.radio.selectedTrackId).toBe(live.id)
+    setup!.mockInput.pressKey("g")
+    setup!.mockInput.pressKey("h")
+    setup!.mockInput.pressKey("g")
+    setup!.mockInput.pressKey("r")
+    await Bun.sleep(0)
+    expect(app!.getState().lists.radio.selectedTrackId).toBe(live.id)
+  })
+
+  test("keeps the initial Radio selection deterministic when sections resolve out of order", async () => {
+    const playback = new FakePlaybackController()
+    const personal = station("personal", "My Discovery Station")
+    const live = station("live", "Apple Music 1", true)
+    const recent = station("recent", "Recently Played")
+    const personalRequest = deferred<AppleCatalogStation>()
+    const liveRequest = deferred<SearchPage<AppleCatalogStation>>()
+    const recentRequest = deferred<SearchPage<AppleCatalogStation>>()
+    await createApp({
+      playback,
+      getPersonalStation: () => personalRequest.promise,
+      getLiveRadioStations: () => liveRequest.promise,
+      getRecentlyPlayedStations: () => recentRequest.promise,
+    })
+    app!.setAppleAuthStatus({ state: "signedIn", storefront: "us" })
+    setup!.mockInput.pressKey("g")
+    setup!.mockInput.pressKey("r")
+
+    liveRequest.resolve({ items: [live], nextCursor: null })
+    await Bun.sleep(0)
+    expect(app!.getState().lists.radio.selectedTrackId).toBe(live.id)
+    recentRequest.resolve({ items: [recent], nextCursor: null })
+    await Bun.sleep(0)
+    personalRequest.resolve(personal)
+    await Bun.sleep(0)
+
+    expect(app!.getState().lists.radio.selectedTrackId).toBe(personal.id)
+    setup!.mockInput.pressEnter()
+    await Bun.sleep(0)
+    expect(playback.stationPlays).toEqual([personal])
+  })
+
+  test("searches Apple radio stations from Radio and plays the selected result", async () => {
+    const playback = new FakePlaybackController()
+    const npr = station("npr", "NPR News and Culture", true)
+    const queries: string[] = []
+    await createApp({
+      playback,
+      searchStations: async (query) => {
+        queries.push(query)
+        return { items: [npr], nextCursor: null }
+      },
+      getStationGenres: async () => [],
+    })
+    app!.setAppleAuthStatus({ state: "signedIn", storefront: "us" })
+    setup!.mockInput.pressKey("g")
+    setup!.mockInput.pressKey("r")
+    setup!.mockInput.pressKey("/")
+    await setup!.mockInput.typeText("NPR")
+    setup!.mockInput.pressEnter()
+    await Bun.sleep(0)
+    await setup!.renderOnce()
+
+    expect(queries).toEqual(["NPR"])
+    expect(setup!.captureCharFrame()).toContain("NPR News and Culture")
+    setup!.mockInput.pressEnter()
+    await Bun.sleep(0)
+    expect(playback.stationPlays).toEqual([npr])
+  })
+
+  test("marks external Radio streams unavailable and does not attempt playback", async () => {
+    const playback = new FakePlaybackController()
+    const npr = station("npr", "NPR News and Culture", true)
+    npr.apple.externalLiveStream = true
+    await createApp({
+      playback,
+      searchStations: async () => ({ items: [npr], nextCursor: null }),
+      getStationGenres: async () => [],
+    })
+    app!.setAppleAuthStatus({ state: "signedIn", storefront: "us" })
+    setup!.mockInput.pressKey("g")
+    setup!.mockInput.pressKey("r")
+    setup!.mockInput.pressKey("/")
+    await setup!.mockInput.typeText("NPR")
+    setup!.mockInput.pressEnter()
+    await Bun.sleep(0)
+    await setup!.renderOnce()
+
+    expect(setup!.captureCharFrame()).toContain("unavailable in MusicKit")
+    setup!.mockInput.pressEnter()
+    await Bun.sleep(0)
+    expect(playback.stationPlays).toEqual([])
+  })
+
+  test("keeps only the latest overlapping Radio search", async () => {
+    const requests = new Map<string, ReturnType<typeof deferred<SearchPage<AppleCatalogStation>>>>()
+    await createApp({
+      searchStations: (query) => {
+        const request = deferred<SearchPage<AppleCatalogStation>>()
+        requests.set(query, request)
+        return request.promise
+      },
+      getStationGenres: async () => [],
+    })
+    app!.setAppleAuthStatus({ state: "signedIn", storefront: "us" })
+    setup!.mockInput.pressKey("g")
+    setup!.mockInput.pressKey("r")
+    setup!.mockInput.pressKey("/")
+    await setup!.mockInput.typeText("first")
+    setup!.mockInput.pressEnter()
+    setup!.mockInput.pressKey("/")
+    await setup!.mockInput.typeText("second")
+    setup!.mockInput.pressEnter()
+
+    requests.get("second")!.resolve({
+      items: [station("second", "Second Station")],
+      nextCursor: null,
+    })
+    await Bun.sleep(0)
+    requests.get("first")!.resolve({
+      items: [station("first", "First Station")],
+      nextCursor: null,
+    })
+    await Bun.sleep(0)
+    await setup!.renderOnce()
+
+    expect(setup!.captureCharFrame()).toContain("Second Station")
+    expect(setup!.captureCharFrame()).not.toContain("First Station")
+  })
+
+  test("clears an aborted search when Radio reloads", async () => {
+    const request = deferred<SearchPage<AppleCatalogStation>>()
+    await createApp({
+      searchStations: () => request.promise,
+      getStationGenres: async () => [],
+    })
+    app!.setAppleAuthStatus({ state: "signedIn", storefront: "us" })
+    setup!.mockInput.pressKey("g")
+    setup!.mockInput.pressKey("r")
+    setup!.mockInput.pressKey("/")
+    await setup!.mockInput.typeText("pending")
+    setup!.mockInput.pressEnter()
+    setup!.mockInput.pressKey("g")
+    setup!.mockInput.pressKey("r")
+    await Bun.sleep(0)
+    await setup!.renderOnce()
+
+    expect(setup!.captureCharFrame()).not.toContain("SEARCH RESULTS")
+  })
+
+  test("browses station genres and opens their stations", async () => {
+    const playback = new FakePlaybackController()
+    const jazz = {
+      id: "apple:station-genre:jazz",
+      name: "Jazz",
+      apple: { resourceId: "jazz", resourceType: "station-genres" as const },
+    }
+    const jazzStation = station("jazz-radio", "Jazz Radio")
+    await createApp({
+      playback,
+      getStationGenres: async () => [jazz],
+      getStationsForGenre: async (resourceId) => {
+        expect(resourceId).toBe("jazz")
+        return { items: [jazzStation], nextCursor: null }
+      },
+    })
+    app!.setAppleAuthStatus({ state: "signedIn", storefront: "us" })
+    setup!.mockInput.pressKey("g")
+    setup!.mockInput.pressKey("r")
+    await Bun.sleep(0)
+    setup!.mockInput.pressEnter()
+    await Bun.sleep(0)
+    await setup!.renderOnce()
+
+    expect(setup!.captureCharFrame()).toContain("Jazz Radio")
+    setup!.mockInput.pressEnter()
+    await Bun.sleep(0)
+    expect(playback.stationPlays).toEqual([jazzStation])
+  })
+
+  test("loads and toggles storefront-scoped favorite stations", async () => {
+    const npr = station("npr", "NPR News and Culture", true)
+    const writes: Array<[string, string, boolean]> = []
+    await createApp({
+      loadFavoriteStationIds: (storefront) => storefront === "us" ? ["npr"] : [],
+      getStationsByIds: async (ids) => {
+        expect(ids).toEqual(["npr"])
+        return [npr]
+      },
+      setStationFavorite: (storefront, resourceId, favorite) => {
+        writes.push([storefront, resourceId, favorite])
+      },
+      getStationGenres: async () => [],
+    })
+    app!.setAppleAuthStatus({ state: "signedIn", storefront: "us" })
+    await Bun.sleep(0)
+    setup!.mockInput.pressKey("g")
+    setup!.mockInput.pressKey("r")
+    await Bun.sleep(0)
+    await setup!.renderOnce()
+
+    const frame = setup!.captureCharFrame()
+    expect(frame).toContain("FAVORITE STATIONS")
+    expect(frame).toContain("★ NPR News and Culture")
+    setup!.mockInput.pressKey("f")
+    expect(writes).toEqual([["us", "npr", false]])
+  })
+
+  test("keeps a station favorited while existing favorites are hydrating", async () => {
+    const hydration = deferred<readonly AppleCatalogStation[]>()
+    const existing = station("existing", "Existing Favorite")
+    const live = station("live-new", "New Favorite", true)
+    await createApp({
+      loadFavoriteStationIds: () => ["existing"],
+      getStationsByIds: () => hydration.promise,
+      setStationFavorite: () => {},
+      getLiveRadioStations: async () => ({ items: [live], nextCursor: null }),
+      getStationGenres: async () => [],
+    })
+    app!.setAppleAuthStatus({ state: "signedIn", storefront: "us" })
+    setup!.mockInput.pressKey("g")
+    setup!.mockInput.pressKey("r")
+    await Bun.sleep(0)
+    setup!.mockInput.pressKey("f")
+    hydration.resolve([existing])
+    await Bun.sleep(0)
+    await setup!.renderOnce()
+
+    const frame = setup!.captureCharFrame()
+    expect(frame).toContain("★ Existing Favorite")
+    expect(frame).toContain("★ New Favorite")
+  })
+
+  test("renders recommended stations on Home and plays them", async () => {
+    const playback = new FakePlaybackController()
+    const recommended = station("recommended", "Ambient Radio")
+    await createApp({
+      playback,
+      getHomeSections: async () => ({
+        items: [{ id: "radio", title: "Explore Radio", items: [recommended] }],
+        nextCursor: null,
+      }),
+    })
+    app!.setAppleAuthStatus({ state: "signedIn", storefront: "us" })
+    await Bun.sleep(0)
+    await setup!.renderOnce()
+
+    expect(setup!.captureCharFrame()).toContain("Ambient Radio")
+    setup!.mockInput.pressEnter()
+    await Bun.sleep(0)
+    expect(playback.stationPlays).toEqual([recommended])
+  })
+
+  test("starts song and artist stations from confirmed now-playing context", async () => {
+    const playback = new FakePlaybackController()
+    const requested: Array<["songs" | "artists", string]> = []
+    await createApp({
+      playback,
+      getSongContext: async () => testSongContext,
+      getAlbum: async () => testAlbum,
+      getArtistSection: async (_id, section) => artistSectionPage(section),
+      getStationForResource: async (type, id) => {
+        requested.push([type, id])
+        return station(`${type}-${id}`, `${type} station`)
+      },
+    })
+    playback.confirm({
+      status: "playing",
+      currentTrack: catalogTracks[0]!,
+      queue: [],
+      positionSeconds: 0,
+      durationSeconds: 180,
+      errorCode: null,
+    })
+
+    setup!.mockInput.pressKey("g")
+    setup!.mockInput.pressKey("n")
+    await Bun.sleep(0)
+    await setup!.renderOnce()
+    expect(setup!.captureCharFrame()).toContain("Start Station from This Song")
+    setup!.mockInput.pressArrow("down")
+    setup!.mockInput.pressArrow("down")
+    setup!.mockInput.pressArrow("down")
+    setup!.mockInput.pressEnter()
+    await Bun.sleep(0)
+    expect(requested[0]).toEqual(["songs", "1"])
+
+    setup!.mockInput.pressKey("g")
+    setup!.mockInput.pressKey("n")
+    await Bun.sleep(0)
+    for (let index = 0; index < 4; index++) setup!.mockInput.pressArrow("down")
+    await setup!.renderOnce()
+    expect(setup!.captureCharFrame()).toContain("Start Station from The Artist")
+    setup!.mockInput.pressEnter()
+    await Bun.sleep(0)
+    expect(requested[1]).toEqual(["artists", "artist-1"])
+  })
+
+  test("cancels radio catalog work on signout", async () => {
+    const pending = deferred<AppleCatalogStation>()
+    const signals: AbortSignal[] = []
+    await createApp({
+      getPersonalStation: (options) => {
+        signals.push(options!.signal!)
+        return pending.promise
+      },
+      getLiveRadioStations: (options) => {
+        signals.push(options!.signal!)
+        return new Promise(() => {})
+      },
+      getRecentlyPlayedStations: (options) => {
+        signals.push(options!.signal!)
+        return new Promise(() => {})
+      },
+    })
+    app!.setAppleAuthStatus({ state: "signedIn", storefront: "us" })
+    setup!.mockInput.pressKey("g")
+    setup!.mockInput.pressKey("r")
+    expect(signals).toHaveLength(3)
+
+    app!.setAppleAuthStatus({ state: "signedOut" })
+    expect(signals.every((signal) => signal.aborted)).toBe(true)
+  })
+
+  test("gates seek, previous, and next on confirmed playback capabilities", async () => {
+    const playback = new FakePlaybackController()
+    await createApp({ playback })
+    playback.confirm({
+      status: "playing",
+      currentTrack: catalogTracks[0]!,
+      queue: [],
+      positionSeconds: 10,
+      durationSeconds: 180,
+      errorCode: null,
+      canSeek: false,
+      canSkipNext: false,
+      canSkipPrevious: false,
+    })
+
+    setup!.mockInput.pressArrow("right")
+    setup!.mockInput.pressKey("b")
+    setup!.mockInput.pressKey("n")
+    await Bun.sleep(0)
+    expect(playback.seekPositions).toEqual([])
+    expect(playback.previousCount).toBe(0)
+    expect(playback.nextCount).toBe(0)
+
+    playback.confirm({
+      ...playback.snapshot,
+      canSeek: true,
+      canSkipNext: true,
+      canSkipPrevious: true,
+    })
+    setup!.mockInput.pressArrow("right")
+    setup!.mockInput.pressKey("b")
+    setup!.mockInput.pressKey("n")
+    await Bun.sleep(0)
+    expect(playback.seekPositions).toEqual([15])
+    expect(playback.previousCount).toBe(1)
+    expect(playback.nextCount).toBe(1)
+  })
+
+  test("describes an empty dynamic queue as continuing radio", async () => {
+    const playback = new FakePlaybackController()
+    await createApp({ playback })
+    playback.confirm({
+      status: "playing",
+      currentTrack: catalogTracks[0]!,
+      queue: [],
+      positionSeconds: 0,
+      durationSeconds: null,
+      errorCode: null,
+      source: { type: "station", id: "radio", title: "Discovery", isLive: false },
+      dynamicQueue: true,
+    })
+    setup!.mockInput.pressKey("g")
+    setup!.mockInput.pressKey("q")
+    await setup!.renderOnce()
+
+    const frame = setup!.captureCharFrame()
+    expect(frame).toContain("0 tracks · radio continues")
+    expect(frame).toContain("radio continues as songs are chosen")
+    expect(frame).not.toContain("queue is empty")
   })
 
   test("opens pinned track info and traps background keys", async () => {
@@ -1927,7 +2407,7 @@ describe("Nutka TUI", () => {
     expect(setup!.captureCharFrame()).toContain("g l library")
     expect(setup!.captureCharFrame()).toContain("b/s/n")
     expect(setup!.captureCharFrame()).toContain("r repeat")
-    expect(setup!.captureCharFrame()).toContain("i           item info")
+    expect(setup!.captureCharFrame()).toContain("f station favorite")
     expect(setup!.captureCharFrame()).toContain("v visualizer")
     expect(setup!.captureCharFrame()).toContain("V settings")
     expect(setup!.captureCharFrame()).toContain("shift+←/→  seek 15s")
@@ -1991,7 +2471,7 @@ describe("Nutka TUI", () => {
     await createApp({ width: 60, height: 12 }, () => quitCount++)
 
     setup!.mockInput.pressKey("p", { ctrl: true })
-    for (let index = 0; index < 9; index++) setup!.mockInput.pressArrow("down")
+    for (let index = 0; index < 10; index++) setup!.mockInput.pressArrow("down")
     await setup!.renderOnce()
     const frame = setup!.captureCharFrame()
 

@@ -78,6 +78,9 @@ path on macOS, download no browser, and open no window.
 The probe tests one real song for 36 seconds plus pause, resume, seek, and stop.
 Set `NUTKA_CHROMIUM_PATH` to select another installed Chrome-compatible browser.
 The Linux worker passes with full-track playback and PipeWire audio.
+Playback attempts are recorded in `~/.local/state/nutka/playback.log` (or
+`$XDG_STATE_HOME/nutka/playback.log`) using structured stages and sanitized
+error codes. Set `NUTKA_PLAYBACK_LOG` to another path or to `off` to disable it.
 Signing out stops the worker and removes this dedicated profile; run
 `Sign in to Apple Music` again to recreate it.
 
@@ -95,27 +98,34 @@ Omarchy-compatible TOML theme and optionally define `visualizer_low`,
 
 ## Controls
 
-- `j`/`k` or arrow keys: move through tracks or playlists
-- `Enter`: play the selected Apple Music song and queue the visible songs after it
+- `j`/`k` or arrow keys: move through tracks, playlists, stations, or radio genres
+- `Enter`: play the selected Apple Music song and queue the visible songs after it,
+  or start the selected Radio station
 - `i`: inspect the selected track, playlist, or its loaded album/playlist context;
   use `j`/`k` or arrows to scroll and `i`/`Escape` to close
 - `Space`: pause or resume confirmed playback
 - `b`, `s`, `n`: play the previous track, toggle shuffle, or play the next track;
   when nothing is playing, `s` shuffle-plays the current source
 - `r`: cycle repeat through all songs, the current song, and off
+- `f`: favorite or unfavorite the selected station in Nutka
 - The now-playing panel shows confirmed `SHUFFLE ON/OFF` and
   `REPEAT OFF/ALL/1` states; compact layouts retain active `S` and `R` badges
 - `v`: toggle the visualizer and suspend or resume PipeWire audio analysis
 - `Shift+V`: configure the visualizer with a live preview
 - `Ctrl+P`: open commands and navigation
-- `g n`: browse the confirmed now-playing song's album and artists; if a new
-  song starts, the open page remains pinned until you run `g n` again
-- `g h`, `g l`, `g p`, `g s`, `g q`: go to Home, Library, Playlists, Search, or Queue
+- `g n`: open actions for the confirmed now-playing song's album, artists, and
+  song or artist stations; if a new song starts, the open page remains pinned
+- `g h`, `g l`, `g p`, `g r`, `g s`, `g q`: go to Home, Library, Playlists,
+  Radio, Search, or Queue
+- Radio: browse favorite, personal, live, and recently played stations, plus
+  Apple's station genres; press `Enter` on a genre to open its stations
+- Radio: press `/` to search Apple's station catalog by name, for example `NPR`;
+  press `m` to load more search or genre results
 - Artist pages: browse top songs, latest release, albums, singles and EPs, and
   similar artists; press `Enter` to play or open and `m` to load more
 - `Escape` or `Ctrl+O`: return through now-playing artist and album pages
-- Home: browse Apple's titled personalized recommendation sections; press `m`
-  to load more sections when available
+- Home: browse favorite stations and Apple's titled playlist or station
+  recommendations; press `m` to load more sections when available
 - Playlists: browse playlists saved in Your Library
 - Home and Playlists: press `Enter` to open a playlist, press `s` to
   shuffle-play it without opening it, turn shuffle mode on, and press `Escape`
@@ -123,7 +133,8 @@ Omarchy-compatible TOML theme and optionally define `visualizer_low`,
 - Playlist tracks: press `Enter` to play the selected song and queue the visible
   songs after it; press `m` to load the next page when available
 - Search: type a query and press `Enter` to search Apple Music songs
-- `/`: fuzzy-filter the currently displayed list without another API request
+- `/`: fuzzy-filter the current list, except in Radio where it searches Apple's
+  station catalog; the command palette still exposes local Radio filtering
 - Search results: press `s` for a new search and `m` to load the next page
 - Search results: press `a` to open the selected song's album; press `Escape` to return
 - Filter: type to narrow, use arrows or `Ctrl+N`/`Ctrl+P` to navigate,
@@ -131,12 +142,21 @@ Omarchy-compatible TOML theme and optionally define `visualizer_low`,
 - `?`: show keyboard help
 - `q`: exit
 
+Station favorites are local to Nutka and scoped by Apple storefront. They are
+stored in `$XDG_DATA_HOME/nutka/apple-station-favorites.json` or
+`~/.local/share/nutka/apple-station-favorites.json`; set `NUTKA_FAVORITES_PATH`
+to use another file. Favoriting does not add a station to the Apple Music
+library. The command palette exposes a separate station-like action that affects
+Apple Music recommendations. Each storefront can hold up to 25 local favorites.
+
 ## Current status
 
 Phase 4 Linux playback integration is complete. Nutka has no bundled catalog;
-Home loads titled personalized recommendation sections, Search loads real Apple
-Music songs and selected-song albums, and `g n` opens the confirmed current
-song's album or artist catalog pages. Playlists loads saved library playlists,
+Home loads favorite stations and titled personalized playlist or station
+recommendations. Search loads real Apple Music songs and selected-song albums,
+and `g n` opens the confirmed current song's album, artist catalog pages, and
+station actions. Radio supports local favorites, catalog search, genre browsing,
+personal stations, live stations, and recently played stations. Playlists loads saved library playlists,
 Library remains empty, and Queue shows the worker-confirmed upcoming songs. A
 supervised hidden Chromium worker provides real play, pause, resume, previous,
 next, seek, shuffle, repeat, stop, now-playing updates, and a PipeWire-driven

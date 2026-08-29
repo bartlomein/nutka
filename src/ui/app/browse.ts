@@ -4,9 +4,13 @@ import type {
   AppleCatalogAlbum,
   AppleCatalogAlbumSummary,
   AppleCatalogArtist,
+  AppleCatalogPlaylist,
+  AppleCatalogStation,
+  AppleCatalogStationGenre,
   AppleCatalogTrack,
   AppleHomeSection,
   ApplePlaylist,
+  Station,
   Track,
 } from "../../core/types"
 
@@ -26,6 +30,153 @@ export const artistSections = [
 export type PlaylistDisplayRow =
   | { kind: "heading"; title: string }
   | { kind: "playlist"; playlist: ApplePlaylist }
+
+export type HomeDisplayRow =
+  | { kind: "heading"; title: string }
+  | { kind: "playlist"; playlist: AppleCatalogPlaylist }
+  | { kind: "station"; station: AppleCatalogStation }
+
+export type RadioSectionName =
+  | "favorites"
+  | "personal"
+  | "live"
+  | "recent"
+  | "search"
+  | "genre"
+
+export interface RadioSectionState {
+  status: "idle" | "loading" | "ready" | "error"
+  stations: readonly Station[]
+}
+
+export type RadioDisplayRow =
+  | { kind: "heading"; title: string }
+  | { kind: "message"; title: string }
+  | { kind: "station"; station: Station }
+  | { kind: "genre"; genre: AppleCatalogStationGenre }
+
+const radioSections = [
+  { name: "favorites", title: "FAVORITE STATIONS" },
+  { name: "personal", title: "MY STATION" },
+  { name: "live", title: "LIVE NOW" },
+  { name: "recent", title: "RECENTLY PLAYED" },
+  { name: "search", title: "SEARCH RESULTS" },
+  { name: "genre", title: "GENRE STATIONS" },
+] as const satisfies readonly { name: RadioSectionName; title: string }[]
+
+export function createRadioSectionStates(): Record<RadioSectionName, RadioSectionState> {
+  return {
+    favorites: { status: "ready", stations: [] },
+    personal: { status: "idle", stations: [] },
+    live: { status: "idle", stations: [] },
+    recent: { status: "idle", stations: [] },
+    search: { status: "idle", stations: [] },
+    genre: { status: "idle", stations: [] },
+  }
+}
+
+export function radioDisplayRows(
+  sections: Record<RadioSectionName, RadioSectionState>,
+  query = "",
+  genres: readonly AppleCatalogStationGenre[] = [],
+  genreStatus: RadioSectionState["status"] = "idle",
+  activeGenreName?: string,
+): readonly RadioDisplayRow[] {
+  const seen = new Set<string>()
+  const sectionRows = radioSections.flatMap(({ name, title }): readonly RadioDisplayRow[] => {
+    const section = sections[name]
+    if ((name === "search" || name === "genre") && section.status === "idle") return []
+    const matches = filterStationValues(section.stations, query)
+    const stations = matches.filter((station) => {
+      if (seen.has(station.id)) return false
+      seen.add(station.id)
+      return true
+    })
+    const rows: RadioDisplayRow[] = [
+      { kind: "heading", title: name === "genre" && activeGenreName
+        ? activeGenreName.toUpperCase()
+        : title },
+      ...stations.map((station): RadioDisplayRow => ({ kind: "station", station })),
+    ]
+    if (section.status === "idle") {
+      rows.push({
+        kind: "message",
+        title: name === "favorites" ? "none saved" : "not loaded",
+      })
+    }
+    else if (section.status === "loading") rows.push({ kind: "message", title: "loading..." })
+    else if (section.status === "error" && stations.length === 0) {
+      rows.push({ kind: "message", title: "unavailable" })
+    } else if (stations.length === 0) {
+      rows.push({
+        kind: "message",
+        title: matches.length > 0
+          ? "already shown above"
+          : query
+            ? "no matches"
+            : name === "favorites" ? "none saved" : "none available",
+      })
+    }
+    return rows
+  })
+  const genreMatches = filterGenreValues(genres, query)
+  const genreRows: RadioDisplayRow[] = [{ kind: "heading", title: "BROWSE BY GENRE" }]
+  if (genreStatus === "loading") genreRows.push({ kind: "message", title: "loading..." })
+  else if (genreStatus === "error") genreRows.push({ kind: "message", title: "unavailable" })
+  else if (genreMatches.length === 0) {
+    genreRows.push({ kind: "message", title: query ? "no matches" : "none available" })
+  } else {
+    genreRows.push(...genreMatches.map((genre): RadioDisplayRow => ({ kind: "genre", genre })))
+  }
+  return [...sectionRows, ...genreRows]
+}
+
+export function radioStations(
+  sections: Record<RadioSectionName, RadioSectionState>,
+  query = "",
+): readonly Station[] {
+  return radioDisplayRows(sections, query).flatMap((row) =>
+    row.kind === "station" ? [row.station] : []
+  )
+}
+
+export function filterStationValues(stations: readonly Station[], query: string): readonly Station[] {
+  const normalized = normalizeFilter(query)
+  if (!normalized) return stations
+  const terms = normalized.split(/\s+/)
+  return stations.filter((station) => {
+    const text = normalizeFilter(
+      `${station.title} ${station.subtitle ?? ""} ${station.description ?? ""}`,
+    )
+    return terms.every((term) => text.includes(term))
+  })
+}
+
+export function filterGenreValues(
+  genres: readonly AppleCatalogStationGenre[],
+  query: string,
+): readonly AppleCatalogStationGenre[] {
+  const normalized = normalizeFilter(query)
+  if (!normalized) return genres
+  const terms = normalized.split(/\s+/)
+  return genres.filter((genre) => {
+    const name = normalizeFilter(genre.name)
+    return terms.every((term) => name.includes(term))
+  })
+}
+
+export function appleStationResourceId(station: Station | undefined): string | null {
+  const apple = (station as Partial<AppleCatalogStation> | undefined)?.apple
+  return apple?.resourceType === "stations" &&
+      typeof apple.resourceId === "string" &&
+      /^[A-Za-z0-9._-]{1,128}$/.test(apple.resourceId) &&
+      (!apple.playParams || (
+        apple.playParams.kind === "radioStation" &&
+        apple.playParams.id === apple.resourceId
+      ))
+    ? apple.resourceId
+    : null
+}
 
 export type ArtistBrowseItem =
   | AppleCatalogTrack
@@ -259,7 +410,10 @@ export function playlistDisplayRows(
 
   const visibleIds = new Set(playlists.map((playlist) => playlist.id))
   return homeSections.flatMap((section): readonly PlaylistDisplayRow[] => {
-    const items = section.items.filter((playlist) => visibleIds.has(playlist.id))
+    const items = section.items.filter(
+      (item): item is AppleCatalogPlaylist =>
+        item.apple.resourceType === "playlists" && visibleIds.has(item.id),
+    )
     return items.length > 0
       ? [
           { kind: "heading", title: section.title },
@@ -269,6 +423,70 @@ export function playlistDisplayRows(
         ]
       : []
   })
+}
+
+export function homeItems(
+  favorites: readonly AppleCatalogStation[],
+  sections: readonly AppleHomeSection[],
+): readonly (AppleCatalogPlaylist | AppleCatalogStation)[] {
+  const ids = new Set<string>()
+  return [...favorites, ...sections.flatMap((section) => section.items)].filter((item) => {
+    if (ids.has(item.id)) return false
+    ids.add(item.id)
+    return true
+  })
+}
+
+export function filterHomeValues(
+  items: readonly (AppleCatalogPlaylist | AppleCatalogStation)[],
+  query: string,
+): readonly (AppleCatalogPlaylist | AppleCatalogStation)[] {
+  const normalized = normalizeFilter(query)
+  if (!normalized) return items
+  const terms = normalized.split(/\s+/)
+  return items.filter((item) => {
+    const text = isAppleCatalogStation(item)
+      ? normalizeFilter(`${item.title} ${item.subtitle ?? ""} ${item.description ?? ""}`)
+      : normalizeFilter(`${item.title} ${item.curator} ${item.description ?? ""}`)
+    return terms.every((term) => text.includes(term))
+  })
+}
+
+export function homeDisplayRows(
+  favorites: readonly AppleCatalogStation[],
+  sections: readonly AppleHomeSection[],
+  visibleItems: readonly (AppleCatalogPlaylist | AppleCatalogStation)[],
+): readonly HomeDisplayRow[] {
+  const visibleIds = new Set(visibleItems.map((item) => item.id))
+  const seen = new Set<string>()
+  const rows: HomeDisplayRow[] = []
+  const visibleFavorites = favorites.filter((station) => visibleIds.has(station.id))
+  if (visibleFavorites.length > 0) {
+    rows.push({ kind: "heading", title: "FAVORITE STATIONS" })
+    for (const station of visibleFavorites) {
+      if (seen.has(station.id)) continue
+      seen.add(station.id)
+      rows.push({ kind: "station", station })
+    }
+  }
+  for (const section of sections) {
+    const items = section.items.filter((item) => visibleIds.has(item.id) && !seen.has(item.id))
+    if (items.length === 0) continue
+    rows.push({ kind: "heading", title: section.title })
+    for (const item of items) {
+      seen.add(item.id)
+      rows.push(isAppleCatalogStation(item)
+        ? { kind: "station", station: item }
+        : { kind: "playlist", playlist: item })
+    }
+  }
+  return rows
+}
+
+export function isAppleCatalogStation(
+  item: AppleCatalogPlaylist | AppleCatalogStation,
+): item is AppleCatalogStation {
+  return item.apple.resourceType === "stations"
 }
 
 export function appendUniqueHomeSections(
