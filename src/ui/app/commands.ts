@@ -51,7 +51,7 @@ export interface CommandAvailability {
 
 export const commands: readonly Command[] = [
   { id: "home", title: "Go to Home", description: "Browse personalized recommendations", shortcut: "g h", keywords: "home personalized recommendations for you" },
-  { id: "library", title: "Go to Library", description: "Browse saved tracks", shortcut: "g l", keywords: "library tracks browse saved" },
+  { id: "library", title: "Go to Library", description: "Browse saved songs, albums, and artists", shortcut: "g l", keywords: "library tracks songs albums artists browse saved" },
   { id: "playlists", title: "Go to Playlists", description: "Browse saved playlists", shortcut: "g p", keywords: "playlists saved library" },
   { id: "radio", title: "Go to Radio", description: "Listen to personal and live stations", shortcut: "g r", keywords: "radio station live personal recent" },
   { id: "search", title: "Search music", description: "Find title, artist, or album", shortcut: "g s", keywords: "search find catalog music" },

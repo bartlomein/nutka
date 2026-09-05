@@ -1,6 +1,7 @@
 import type { KeyEvent } from "@opentui/core"
 
 import type { Destination } from "../../core/state"
+import type { AppleLibrarySection } from "../../core/types"
 
 export interface NormalModeKeyHost {
   pendingKey(): string | null
@@ -30,6 +31,8 @@ export interface NormalModeKeyHost {
   openSearchOrFilter(): void
   openSelectedAlbum(): void
   loadMore(): void
+  switchLibrarySection?(section: AppleLibrarySection): void
+  refreshLibrary?(): void
   openHelp(): void
   escape(): void
   quit(): void
@@ -86,7 +89,11 @@ export class NormalModeKeyController {
         return
       }
     }
-    if (isPlainKey(key, "i")) this.host.openSelectedInfo()
+    if (isPlainKey(key, "1")) this.host.switchLibrarySection?.("songs")
+    else if (isPlainKey(key, "2")) this.host.switchLibrarySection?.("albums")
+    else if (isPlainKey(key, "3")) this.host.switchLibrarySection?.("artists")
+    else if (isShiftKey(key, "r")) this.host.refreshLibrary?.()
+    else if (isPlainKey(key, "i")) this.host.openSelectedInfo()
     else if (isPlainKey(key, "j") || key.name === "down") this.host.moveSelection(1)
     else if (isPlainKey(key, "k") || key.name === "up") this.host.moveSelection(-1)
     else if (key.name === "return" || key.name === "enter") this.host.activateSelection()

@@ -1,6 +1,7 @@
 import type { KeyEvent } from "@opentui/core"
 
 import type { AppAction, AppState, Destination } from "../../core/state"
+import type { AppleLibrarySection } from "../../core/types"
 import type { AppleAuthStatus } from "../../services/apple-auth"
 import type { VisualizerSettings } from "../visualizer"
 import {
@@ -68,6 +69,8 @@ export interface AppInteractionHost {
   openSearchOrFilter(): void
   openSelectedAlbum(): void
   loadMore(): void
+  switchLibrarySection?(section: AppleLibrarySection): void
+  refreshLibrary?(): void
   escapeNormalMode(): void
   startCurrentSongStation(): void
   signIn(): void
@@ -128,6 +131,8 @@ export class AppInteractionController {
       openSearchOrFilter: () => this.host.openSearchOrFilter(),
       openSelectedAlbum: () => this.host.openSelectedAlbum(),
       loadMore: () => this.host.loadMore(),
+      switchLibrarySection: (section) => this.host.switchLibrarySection?.(section),
+      refreshLibrary: () => this.host.refreshLibrary?.(),
       openHelp: () => this.host.dispatch({ type: "open-help" }),
       escape: () => this.host.escapeNormalMode(),
       quit: () => this.host.quit(),

@@ -104,7 +104,8 @@ MusicKit through a private pipe and the TUI renders only worker-confirmed state.
 
 ### Phase 5 — Integration and packaging
 
-- add Apple Music library albums, artists, and songs
+- [x] add Apple Music library albums, artists, and songs, with paginated saved
+  relationships, filtering, refresh, and catalog-backed playback
 - harden and package login persistence across supported platforms
 - package the `nutka` executable
 - add macOS and Linux CI builds, then test Windows
@@ -128,5 +129,6 @@ a playback implementation.
 
 ## Immediate next action
 
-Prove the worker on macOS, then add library and richer catalog browsing without
-changing the confirmed-state playback boundary.
+Prove the worker on macOS, then package the executable and add Linux/macOS CI.
+Library browsing is implemented; uploaded songs without a usable catalog ID
+remain visible but cannot play through the current catalog-only playback worker.

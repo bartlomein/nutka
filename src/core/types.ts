@@ -228,6 +228,32 @@ export interface SearchPage<T> {
   nextCursor: string | null
 }
 
+export type AppleLibrarySection = "songs" | "albums" | "artists"
+
+// Library IDs stay distinct from catalog IDs, including for uploaded songs.
+export interface AppleLibrarySong extends Track {
+  kind: "song"
+  resourceId: string
+  playback?: AppleCatalogTrack
+}
+
+export interface AppleLibraryAlbum {
+  kind: "album"
+  id: string
+  resourceId: string
+  title: string
+  artist: string
+}
+
+export interface AppleLibraryArtist {
+  kind: "artist"
+  id: string
+  resourceId: string
+  name: string
+}
+
+export type AppleLibraryItem = AppleLibrarySong | AppleLibraryAlbum | AppleLibraryArtist
+
 export interface SearchOptions {
   signal?: AbortSignal
   cursor?: string

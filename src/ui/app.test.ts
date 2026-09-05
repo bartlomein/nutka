@@ -14,6 +14,9 @@ import type {
   AppleCatalogTrack,
   AppleHomeSection,
   AppleLibraryPlaylist,
+  AppleLibrarySong,
+  AppleLibraryAlbum,
+  AppleLibraryArtist,
   ApplePlaylist,
   AppleSongContext,
   PlaybackController,
@@ -25,6 +28,7 @@ import type {
 } from "../core/types"
 import { createNutkaApp, type NutkaApp } from "./app"
 import type { VisualizerSettings } from "./visualizer"
+import type { LibraryServices } from "./app/library-controller"
 
 let setup: TestRendererSetup | undefined
 let app: NutkaApp | undefined
@@ -376,6 +380,7 @@ afterEach(() => {
 
 async function createApp(
   options: {
+    library?: LibraryServices
     width?: number
     height?: number
     kittyKeyboard?: boolean
@@ -473,6 +478,7 @@ async function createApp(
     kittyKeyboard: options.kittyKeyboard,
   })
   app = createNutkaApp(setup.renderer, {
+    library: options.library,
     tracks: options.tracks ?? testTracks,
     onSearchSongs: options.searchSongs,
     onGetAlbumForSong: options.getAlbumForSong,
@@ -2626,5 +2632,167 @@ describe("Nutka TUI", () => {
     app!.setAppleAuthStatus({ state: "error", code: "credential_delete_failed" })
     await setup!.renderOnce()
     expect(setup!.captureCharFrame()).toContain("apple × sign-out")
+  })
+})
+
+const savedSongs: readonly AppleLibrarySong[] = catalogTracks.map((track, index) => ({
+  kind: "song", id: `apple:library-song:i.${index}`, resourceId: `i.${index}`,
+  title: track.title, artist: track.artist, album: track.album,
+  durationSeconds: track.durationSeconds, playback: track,
+}))
+const savedAlbum: AppleLibraryAlbum = {
+  kind: "album", id: "apple:library-album:l.saved", resourceId: "l.saved",
+  title: "My Saved Album", artist: "My Saved Artist",
+}
+const savedArtist: AppleLibraryArtist = {
+  kind: "artist", id: "apple:library-artist:r.saved", resourceId: "r.saved", name: "My Saved Artist",
+}
+function libraryServices(overrides: Partial<LibraryServices> = {}): LibraryServices {
+  return {
+    getSongs: async () => ({ items: savedSongs, nextCursor: null }),
+    getAlbums: async () => ({ items: [savedAlbum], nextCursor: null }),
+    getArtists: async () => ({ items: [savedArtist], nextCursor: null }),
+    getAlbumTracks: async () => ({ items: savedSongs, nextCursor: null }),
+    getArtistAlbums: async () => ({ items: [savedAlbum], nextCursor: null }),
+    ...overrides,
+  }
+}
+function gotoLibrary(): void {
+  setup!.mockInput.pressKey("g")
+  setup!.mockInput.pressKey("l")
+}
+
+describe("Apple Music Library TUI", () => {
+  test("loads all saved song pages automatically without losing selection, and plays confirmed catalog IDs", async () => {
+    const playback = new FakePlaybackController()
+    const cursors: Array<string | undefined> = []
+    await createApp({ tracks: [], playback, library: libraryServices({
+      getSongs: async (options) => {
+        cursors.push(options?.cursor)
+        return options?.cursor
+          ? { items: savedSongs, nextCursor: null }
+          : { items: [savedSongs[0]!], nextCursor: "page2" }
+      },
+    }) })
+    app!.setAppleAuthStatus({ state: "signedIn", storefront: "us" })
+    gotoLibrary()
+    await Bun.sleep(0)
+    await setup!.renderOnce()
+    expect(setup!.captureCharFrame()).toContain("Library songs")
+    expect(setup!.captureCharFrame()).toContain("First Track")
+    expect(setup!.captureCharFrame()).toContain("1 songs")
+    expect(app!.getState().lists.library.selectedTrackId).toBe(savedSongs[0]!.id)
+    expect(cursors).toEqual([undefined, "page2"])
+    expect(app!.getState().lists.library.selectedTrackId).toBe(savedSongs[0]!.id)
+    setup!.mockInput.pressEnter()
+    expect(playback.plays).toEqual([{ track: catalogTracks[0]!, upcomingTracks: [catalogTracks[1]!] }])
+    expect(app!.getState().playback.status).toBe("idle")
+    setup!.mockInput.pressKey("/")
+    await setup!.mockInput.typeText("Second")
+    setup!.mockInput.pressEnter()
+    await setup!.renderOnce()
+    expect(setup!.captureCharFrame()).toContain("Second Track")
+    expect(setup!.captureCharFrame()).not.toContain("First Track")
+    setup!.mockInput.pressEnter()
+    expect(playback.plays.at(-1)).toEqual({ track: catalogTracks[1]!, upcomingTracks: [] })
+    playback.confirm({ status: "playing", currentTrack: catalogTracks[1]!, queue: [], positionSeconds: 0, durationSeconds: 240, errorCode: null })
+    expect(app!.getState().playback.currentTrackId).toBe(catalogTracks[1]!.id)
+  })
+
+  test("browses saved artist albums and tracks, restoring filters and selection on back", async () => {
+    const requests: string[] = []
+    const playback = new FakePlaybackController()
+    await createApp({ tracks: [], playback, kittyKeyboard: true, library: libraryServices({
+      getArtistAlbums: async (id) => {
+        requests.push(id)
+        return { items: [savedAlbum], nextCursor: null }
+      },
+      getAlbumTracks: async (id) => {
+        requests.push(id)
+        return { items: savedSongs, nextCursor: null }
+      },
+    }) })
+    app!.setAppleAuthStatus({ state: "signedIn", storefront: "us" })
+    gotoLibrary()
+    setup!.mockInput.pressKey("3")
+    await Bun.sleep(0)
+    setup!.mockInput.pressKey("/")
+    await setup!.mockInput.typeText("Saved")
+    setup!.mockInput.pressEnter()
+    setup!.mockInput.pressEnter()
+    await Bun.sleep(0)
+    await setup!.renderOnce()
+    expect(setup!.captureCharFrame()).toContain("My Saved Album")
+    expect(app!.getState().lists.library.filter).toBe("")
+    setup!.mockInput.pressEnter()
+    await Bun.sleep(0)
+    setup!.mockInput.pressKey("j")
+    setup!.mockInput.pressEnter()
+    expect(playback.plays.at(-1)?.track).toEqual(catalogTracks[1]!)
+    expect(requests).toEqual(["r.saved", "l.saved"])
+    setup!.mockInput.pressKey("o", { ctrl: true })
+    expect(app!.getState().lists.library.selectedTrackId).toBe(savedAlbum.id)
+    setup!.mockInput.pressEscape()
+    expect(app!.getState().lists.library).toEqual({ filter: "Saved", selectedTrackId: savedArtist.id })
+    setup!.mockInput.pressKey("2")
+    await Bun.sleep(0)
+    await setup!.renderOnce()
+    expect(setup!.captureCharFrame()).toContain("Library albums")
+    expect(setup!.captureCharFrame().split("\n").find((line) => line.includes("› My Saved Album"))).not.toContain("0:00")
+    setup!.mockInput.pressKey("3")
+    expect(app!.getState().lists.library.filter).toBe("Saved")
+  })
+
+  test("shows unavailable songs and retry states, refreshes, and clears personal data on sign-out", async () => {
+    let calls = 0
+    const playback = new FakePlaybackController()
+    const { playback: unused, ...unavailable } = savedSongs[0]!
+    await createApp({ tracks: [], playback, library: libraryServices({
+      getSongs: async () => {
+        if (++calls === 1) throw new Error("offline")
+        return { items: [unavailable], nextCursor: null }
+      },
+    }) })
+    gotoLibrary()
+    await setup!.renderOnce()
+    expect(setup!.captureCharFrame()).toContain("Sign in to Apple Music")
+    expect(calls).toBe(0)
+    app!.setAppleAuthStatus({ state: "signedIn", storefront: "us" })
+    await Bun.sleep(0)
+    await setup!.renderOnce()
+    expect(setup!.captureCharFrame()).toContain("m retry")
+    setup!.mockInput.pressKey("m")
+    await Bun.sleep(0)
+    await setup!.renderOnce()
+    expect(setup!.captureCharFrame()).toContain("First Track [unavailable]")
+    setup!.mockInput.pressEnter()
+    expect(playback.plays).toHaveLength(0)
+    setup!.mockInput.pressKey("R")
+    await Bun.sleep(0)
+    expect(calls).toBe(3)
+    app!.setAppleAuthStatus({ state: "signedOut" })
+    await setup!.renderOnce()
+    expect(setup!.captureCharFrame()).not.toContain("First Track")
+    expect(app!.getState().lists.library.selectedTrackId).toBeNull()
+  })
+
+  test("renders Library navigation in a compact terminal and preserves typing when a page arrives", async () => {
+    const pending = deferred<SearchPage<AppleLibrarySong>>()
+    await createApp({ width: 60, height: 16, tracks: [], library: libraryServices({
+      getSongs: () => pending.promise,
+    }) })
+    app!.setAppleAuthStatus({ state: "signedIn", storefront: "us" })
+    gotoLibrary()
+    setup!.mockInput.pressKey("/")
+    await setup!.mockInput.typeText("Second")
+    pending.resolve({ items: savedSongs, nextCursor: null })
+    await Bun.sleep(0)
+    expect(app!.getState().mode).toEqual({ type: "filter", draft: "Second", originalSelectedTrackId: null })
+    expect(app!.getState().lists.library.selectedTrackId).toBe(savedSongs[1]!.id)
+    setup!.mockInput.pressEnter()
+    await setup!.renderOnce()
+    expect(setup!.captureCharFrame()).toContain("1 songs 2 albums 3 artists")
+    expect(setup!.captureCharFrame()).toContain("Second Track")
+    expect(setup!.captureCharFrame()).not.toContain("First Track")
   })
 })

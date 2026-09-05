@@ -87,6 +87,13 @@ const favoriteStationStore = createFavoriteStationStore()
 
 const app = createNutkaApp(renderer, {
   tracks: [],
+  library: {
+    getSongs: (options) => requireCatalog().getLibrarySongs(options),
+    getAlbums: (options) => requireCatalog().getLibraryAlbums(options),
+    getArtists: (options) => requireCatalog().getLibraryArtists(options),
+    getAlbumTracks: (id, options) => requireCatalog().getLibraryAlbumTracks(id, options),
+    getArtistAlbums: (id, options) => requireCatalog().getLibraryArtistAlbums(id, options),
+  },
   onQuit: () => void shutdown(),
   onSearchSongs: (query, options) => {
     if (!catalogProvider) return Promise.reject(new Error("Apple Music sign-in required"))
@@ -220,6 +227,11 @@ process.once("SIGHUP", () => void shutdown())
 async function signOut(): Promise<void> {
   await authManager!.logout()
   await playbackController?.clearAuthorization()
+}
+
+function requireCatalog(): AppleCatalogProvider {
+  if (!catalogProvider) throw new Error("Apple Music sign-in required")
+  return catalogProvider
 }
 
 async function shutdown(): Promise<void> {

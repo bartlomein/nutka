@@ -127,6 +127,14 @@ Omarchy-compatible TOML theme and optionally define `visualizer_low`,
 - Home: browse favorite stations and Apple's titled playlist or station
   recommendations; press `m` to load more sections when available
 - Playlists: browse playlists saved in Your Library
+- Library: press `1`, `2`, or `3` to browse saved songs, albums, or artists.
+  Press `Enter` on an artist to open their saved albums, or on an album to open
+  its saved tracks. `Escape` or `Ctrl+O` returns to the previous list and restores
+  its selection and filter.
+- Library: each list loads all pages automatically and shows items as they arrive.
+  `/` fuzzy-filters the loaded items; `m` retries a failed request, and `Shift+R` refreshes the current list. Press `Enter` on a song to
+  play it and queue the loaded, filtered songs after it. Songs without a usable
+  Apple catalog ID remain visible as `[unavailable]` and are skipped in playback.
 - Home and Playlists: press `Enter` to open a playlist, press `s` to
   shuffle-play it without opening it, turn shuffle mode on, and press `Escape`
   to return
@@ -156,8 +164,10 @@ Home loads favorite stations and titled personalized playlist or station
 recommendations. Search loads real Apple Music songs and selected-song albums,
 and `g n` opens the confirmed current song's album, artist catalog pages, and
 station actions. Radio supports local favorites, catalog search, genre browsing,
-personal stations, live stations, and recently played stations. Playlists loads saved library playlists,
-Library remains empty, and Queue shows the worker-confirmed upcoming songs. A
+personal stations, live stations, and recently played stations. Playlists loads saved library playlists.
+Library browses saved songs, albums, artists, and their saved relationships with
+pagination, filtering, refresh, and playback. Queue shows the worker-confirmed
+upcoming songs. A
 supervised hidden Chromium worker provides real play, pause, resume, previous,
 next, seek, shuffle, repeat, stop, now-playing updates, and a PipeWire-driven
 spectrum without optimistic UI state.

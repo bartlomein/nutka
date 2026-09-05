@@ -45,6 +45,7 @@ import { CatalogSearchController } from "./app/catalog-search-controller"
 import { CatalogBrowseController } from "./app/catalog-browse-controller"
 import { PlaybackSessionController } from "./app/playback-session-controller"
 import { PlaylistController } from "./app/playlist-controller"
+import { LibraryController, type LibraryServices } from "./app/library-controller"
 import { RadioController } from "./app/radio-controller"
 import { TrackStore } from "./app/track-store"
 import { createAppView } from "./app/view"
@@ -54,6 +55,7 @@ import { defaultVisualizerSettings } from "./visualizer/preferences"
 export { formatDuration } from "./app/browse"
 
 export interface NutkaAppOptions {
+  library?: LibraryServices
   tracks: readonly Track[]
   onQuit: () => void
   onSearchSongs?: (
@@ -166,6 +168,20 @@ export function createNutkaApp(
     ? { state: "signedOut" }
     : { state: "error", code: "service_unavailable" }
   const initialVisualizerSettings = options.visualizerSettings ?? defaultVisualizerSettings
+  const library = options.library ? new LibraryController(options.library, {
+    active: () => state.destination === "library",
+    authenticated: () => appleAuthStatus.state === "signedIn",
+    list: () => state.lists.library,
+    query: () => state.mode.type === "filter" ? state.mode.draft : state.lists.library.filter,
+    restoreList: (list) => {
+      state = {
+        ...state,
+        lists: { ...state.lists, library: { ...list } },
+      }
+    },
+    replaceTracks: (items) => tracks.replace("library", items),
+    render: () => renderState(),
+  }) : undefined
   const radio = new RadioController({
     getPersonalStation: options.onGetPersonalStation,
     getLiveStations: options.onGetLiveRadioStations,
@@ -413,6 +429,20 @@ export function createNutkaApp(
       dispatch({ type: "move-selection", delta, visibleTrackIds })
     },
     activateSelection: () => {
+      if (state.destination === "library" && library) {
+        if (appleAuthStatus.state !== "signedIn") return
+        const query = state.lists.library.filter
+        if (library.openSelected(query)) return
+        const items = library.visibleItems(query)
+        const index = items.findIndex((item) => item.id === state.lists.library.selectedTrackId)
+        const selected = items[index]
+        if (selected?.kind === "song" && selected.playback) {
+          const upcoming = items.slice(index + 1).flatMap((item) =>
+            item.kind === "song" && item.playback ? [item.playback] : [])
+          void playbackSession.play(selected.playback, upcoming).catch(() => {})
+        }
+        return
+      }
       if (state.destination === "radio") {
         const selectedId = state.lists.radio.selectedTrackId
         if (radio.genres.some((genre) => genre.id === selectedId)) void openSelectedRadioGenre()
@@ -454,6 +484,10 @@ export function createNutkaApp(
     },
     loadMore: () => {
       if (currentBrowsePage()) return
+      if (state.destination === "library" && library) {
+        library.loadMore()
+        return
+      }
       if (state.destination === "search" && !catalogBrowse.albumView) void loadMoreCatalogSearch()
       else if (state.destination === "radio") {
         if (radio.activeResultType === "search" && radio.search.nextCursor) {
@@ -467,6 +501,7 @@ export function createNutkaApp(
       }
     },
     escapeNormalMode: () => {
+      if (state.destination === "library" && library?.back()) return
       if (catalogBrowse.albumView) {
         leaveAlbumView()
         renderState()
@@ -474,6 +509,12 @@ export function createNutkaApp(
         leavePlaylistView()
         renderState()
       } else if (state.destination !== "home") navigateTo("home")
+    },
+    switchLibrarySection: (section) => {
+      if (state.destination === "library" && !currentBrowsePage()) library?.switchSection(section)
+    },
+    refreshLibrary: () => {
+      if (state.destination === "library" && !currentBrowsePage()) library?.refresh()
     },
     startCurrentSongStation: () => void startCurrentSongStation(),
     signIn: () => options.onAppleSignIn?.(),
@@ -508,6 +549,9 @@ export function createNutkaApp(
       ? browsePageTracks(browsePage).filter(isPlayableAppleTrack)
       : []
     if (browseTracks.length > 0) return browseTracks
+    if (state.destination === "library" && library) {
+      return library.playableTracks(state.mode.type === "filter" ? state.mode.draft : state.lists.library.filter)
+    }
     const visibleTracks = getVisibleTracks().filter(isPlayableAppleTrack)
     if (visibleTracks.length > 0) return visibleTracks
 
@@ -522,7 +566,7 @@ export function createNutkaApp(
 
   function getBaseTracks(destination = state.destination): readonly Track[] {
     if (destination === "radio") return []
-    if (destination === "library") return libraryTracks
+    if (destination === "library") return library?.rows() ?? libraryTracks
     if (destination === "search") {
       return catalogBrowse.albumView?.status === "ready"
         ? catalogBrowse.albumView.album!.tracks
@@ -595,6 +639,10 @@ export function createNutkaApp(
 
   function selectedInfoTarget(): InfoTarget | undefined {
     const selectedId = state.lists[state.destination].selectedTrackId
+    if (state.destination === "library" && library) {
+      const item = library.page.items.find((item) => item.id === selectedId)
+      return item?.kind === "song" ? { kind: "track", track: item.playback ?? item } : undefined
+    }
     if (state.destination === "home" && !playlists.view) {
       const item = getVisibleHomeItems().find((candidate) => candidate.id === selectedId)
       return item && !isAppleCatalogStation(item)
@@ -731,6 +779,7 @@ export function createNutkaApp(
   }
 
   function popBrowsePage(): boolean {
+    if (!currentBrowsePage() && state.destination === "library" && library?.back()) return true
     return catalogBrowse.popBrowsePage()
   }
 
@@ -783,6 +832,7 @@ export function createNutkaApp(
   }
 
   function navigateTo(destination: Destination): void {
+    if (state.destination === "library") library?.leave()
     const reopenSearch = destination === "search" && state.destination === "search"
     closeBrowseSession(false)
     leaveAlbumView()
@@ -810,6 +860,7 @@ export function createNutkaApp(
       void loadPlaylistLanding(destination)
     }
     if (destination === "radio" && appleAuthStatus.state === "signedIn") loadRadio()
+    if (destination === "library") library?.enter()
   }
 
   async function submitCatalogSearch(query: string): Promise<void> {
@@ -845,6 +896,15 @@ export function createNutkaApp(
       authSuccessVisible: interactionState.authSuccessVisible,
       baseTracks: getBaseTracks(),
       visibleTracks: getVisibleTracks(),
+      ...(!activeBrowsePage && state.destination === "library" && library ? {
+        library: {
+          page: library.page,
+          section: library.section,
+          nested: library.nested,
+          statusLine: library.statusLine(activeFilter),
+          emptyMessage: library.emptyMessage(activeFilter),
+        },
+      } : {}),
       ...(activeBrowsePage ? { browsePage: activeBrowsePage } : {}),
       ...(activeAlbumView ? { albumView: activeAlbumView } : {}),
       ...(activePlaylistView ? { playlistView: activePlaylistView } : {}),
@@ -938,6 +998,8 @@ export function createNutkaApp(
         leavePlaylistView()
         searchController.clear()
         playlists.reset()
+        library?.reset()
+        state = reduceAppState(state, { type: "reset-list", destination: "library", selectedTrackId: null })
         clearFavoriteStations()
         clearRadio()
         tracks.clear("search")
@@ -983,11 +1045,13 @@ export function createNutkaApp(
         if (state.destination === "playlists") void loadPlaylistLanding("playlists")
       }
       if (shouldLoadRadio) loadRadio()
+      if (shouldLoadHome && state.destination === "library") library?.enter()
     },
     destroy: () => {
       searchController.clear()
       catalogBrowse.destroy()
       playlists.destroy()
+      library?.reset()
       clearFavoriteStations()
       clearRadio()
       playbackSession.destroy()

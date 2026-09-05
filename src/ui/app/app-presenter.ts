@@ -6,6 +6,7 @@ import type {
   AppleCatalogStation,
   AppleHomeSection,
   ApplePlaylist,
+  AppleLibrarySection,
   AudioSpectrumFrame,
   Station,
   Track,
@@ -73,6 +74,7 @@ import {
   type InfoTarget,
 } from "./copy"
 import type { PlaylistView } from "./playlist-controller"
+import type { LibraryPage } from "./library-controller"
 import {
   maxContextRows,
   maxPaletteRows,
@@ -94,6 +96,13 @@ export interface AppViewModel {
   authSuccessVisible: boolean
   baseTracks: readonly Track[]
   visibleTracks: readonly Track[]
+  library?: {
+    page: LibraryPage
+    section: AppleLibrarySection
+    nested: boolean
+    statusLine: string
+    emptyMessage: string
+  }
   browsePage?: BrowsePage
   albumView?: SearchAlbumView
   playlistView?: PlaylistView
@@ -242,6 +251,7 @@ export function createAppPresenter(
       ? state.mode.draft
       : state.lists[state.destination].filter
     const showFilter = Boolean(activeBrowsePage) ||
+      Boolean(model.library) ||
       state.destination === "search" ||
       state.destination === "home" ||
       state.destination === "playlists" ||
@@ -257,14 +267,20 @@ export function createAppPresenter(
     const showingAlbum = activeAlbumView !== undefined
     const showingPlaylist = activePlaylistView !== undefined
 
-    view.breadcrumb.content = activeBrowsePage
+    view.breadcrumb.content = model.library
+      ? renderer.terminalWidth < 50
+        ? "nutka / library"
+        : `nutka  /  library  /  ${model.library.section}${model.library.nested ? `  /  ${model.library.page.section}` : ""}`
+      : activeBrowsePage
       ? `nutka  /  ${activeBrowsePage.kind}`
       : showingPlaylist
       ? `nutka  /  ${activePlaylistView.sourceDestination}  /  playlist`
       : showingAlbum
       ? "nutka  /  search  /  album"
       : `nutka  /  ${destinationName.toLowerCase()}`
-    view.workspaceTitle.content = activeBrowsePage
+    view.workspaceTitle.content = model.library
+      ? model.library.page.title
+      : activeBrowsePage
       ? activeBrowsePage.kind === "artist"
         ? activeBrowsePage.artist.name
         : activeBrowsePage.album?.title ?? activeBrowsePage.summary.title
@@ -275,7 +291,9 @@ export function createAppPresenter(
           : state.destination === "search"
             ? "Search music"
             : destinationName
-    view.workspaceCount.content = activeBrowsePage?.kind === "artist"
+    view.workspaceCount.content = model.library
+      ? `${visibleTracks.length} ${pluralize(model.library.page.section.slice(0, -1), visibleTracks.length)} loaded`
+      : activeBrowsePage?.kind === "artist"
       ? `${artistSelectableRows(activeBrowsePage).length} items`
       : activeBrowsePage?.kind === "album"
         ? activeBrowsePage.status === "loading"
@@ -319,6 +337,8 @@ export function createAppPresenter(
         ? `›  ${state.mode.draft}_`
         : state.mode.type === "filter"
         ? `›  ${state.mode.draft}_`
+        : model.library
+          ? model.library.statusLine
         : activePlaylistView?.status === "loading"
           ? `◌  loading “${activePlaylistView.playlist.title}”`
           : activePlaylistView?.status === "loadingMore"
@@ -353,7 +373,7 @@ export function createAppPresenter(
         : state.destination === "search"
           ? model.searchStatusLine
           : ""
-    view.filterLine.fg = activeBrowsePage && browsePageHasError(activeBrowsePage)
+    view.filterLine.fg = model.library?.page.error || (activeBrowsePage && browsePageHasError(activeBrowsePage))
       ? theme.amber
       : state.mode.type === "filter" || state.mode.type === "search"
         ? theme.text
@@ -368,7 +388,9 @@ export function createAppPresenter(
           : theme.muted
     setTrackRowContent(
       view.tableHeader,
-      activeBrowsePage?.kind === "artist"
+      model.library && model.library.page.section !== "songs"
+        ? { title: model.library.page.section === "artists" ? "artist" : "album", artist: "artist", album: "", time: "" }
+        : activeBrowsePage?.kind === "artist"
         ? { title: "item", artist: "artist", album: "type", year: "year", time: "time" }
         : radioLanding
           ? { title: "station", artist: "context", album: "description", time: "" }
@@ -544,7 +566,9 @@ export function createAppPresenter(
         row.box.visible = showEmpty
         setTrackRowContent(row, {
           title: showEmpty
-            ? activeBrowsePage?.kind === "album"
+            ? model.library
+              ? model.library.emptyMessage
+            : activeBrowsePage?.kind === "album"
               ? browseAlbumEmptyMessage(activeBrowsePage.status)
               : activeBrowsePage?.kind === "artist"
                 ? "No artist content found"
@@ -574,14 +598,17 @@ export function createAppPresenter(
       }
 
       const selected = track.id === selectedId
+      const libraryItem = model.library?.page.items.find((item) => item.id === track.id)
+      const unavailable = libraryItem?.kind === "song" && !libraryItem.playback
+      const title = `${track.title}${unavailable ? " [unavailable]" : ""}`
       row.box.visible = true
       setTrackRowContent(row, {
         title: renderer.terminalWidth < 64
-          ? `${selected ? "›" : " "} ${track.title} — ${track.artist}`
-          : `${selected ? "›" : " "} ${track.title}`,
+          ? `${selected ? "›" : " "} ${title}${track.artist ? ` — ${track.artist}` : ""}`
+          : `${selected ? "›" : " "} ${title}`,
         artist: track.artist,
-        album: track.album,
-        time: formatDuration(track.durationSeconds),
+        album: libraryItem && libraryItem.kind !== "song" ? "enter to open" : track.album,
+        time: libraryItem && libraryItem.kind !== "song" ? "" : formatDuration(track.durationSeconds),
       })
       row.box.backgroundColor = selected ? theme.selection : theme.background
       setTrackRowColor(row, selected ? theme.text : theme.muted)
@@ -721,8 +748,15 @@ export function createAppPresenter(
     }
 
     view.helpOverlay.visible = state.mode.type === "help"
-    const compactHelp = renderer.terminalHeight < 18
-    const compactHelpLines = [
+    const compactHelp = renderer.terminalHeight < view.helpLines.length + 2
+    const compactHelpLines = model.library ? [
+      "1 songs  2 albums  3 artists",
+      "enter open/play  esc back",
+      "/ filter  m retry",
+      "R refresh  ctrl+o back",
+      "space pause  ctrl+p commands",
+      "b/s/n prev/shuffle/next",
+    ] : [
       "ctrl+p commands · g n now playing",
       "↑/↓ move · i info · f station favorite",
       "b/s/n previous · shuffle · next · r repeat · l like",
@@ -740,7 +774,7 @@ export function createAppPresenter(
           : theme.text
         : (view.helpLines[index]?.[1] ?? theme.text)
     })
-    view.helpPopup.height = compactHelp ? 9 : 17
+    view.helpPopup.height = compactHelp ? 9 : view.helpLines.length + 2
 
     view.infoOverlay.visible = infoTarget !== undefined
     if (infoTarget) {
@@ -803,6 +837,12 @@ export function createAppPresenter(
         ? "Could not update Apple station like   ctrl+p retry"
       : activeBrowsePage && state.mode.type === "normal"
         ? browseFooterHelp(activeBrowsePage, renderer.terminalWidth)
+      : model.library && state.mode.type === "normal"
+        ? renderer.terminalWidth < 50
+          ? "1/2/3 views  m retry  ? help"
+        : renderer.terminalWidth < 100
+          ? "1 songs 2 albums 3 artists  / filter  m retry"
+          : "1 songs 2 albums 3 artists  enter open/play  / filter  m retry  R refresh  esc back"
       : showingPlaylist && state.mode.type === "normal"
         ? playlistDetailFooterHelp(activePlaylistView?.nextCursor !== null, renderer.terminalWidth)
       : homeLanding && state.mode.type === "normal"

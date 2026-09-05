@@ -311,6 +311,7 @@ export function createAppView(
   const helpLines = [
     ["GLOBAL", theme.accent],
     ["g n now playing   g h home   g l library", theme.text],
+    ["Library: 1 songs  2 albums  3 artists  R refresh", theme.text],
     ["g p playlists   g r radio   g s search   g q queue", theme.text],
     ["ctrl+p commands   v visualizer   V settings   ? help   q quit", theme.text],
     ["", theme.text],
@@ -319,7 +320,7 @@ export function createAppView(
     ["b/s/n       previous / shuffle / next      r repeat   l like", theme.text],
     ["i item info   f station favorite   / filter or Radio search", theme.text],
     ["←/→         seek 5s   shift+←/→  seek 15s", theme.text],
-    ["esc         back to Home or cancel pending g", theme.text],
+    ["esc         back or cancel pending g", theme.text],
     ["", theme.text],
     ["FILTER", theme.accent],
     ["type to narrow        ↑/↓  choose        enter  apply", theme.text],

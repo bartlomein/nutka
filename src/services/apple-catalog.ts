@@ -10,6 +10,9 @@ import type {
   AppleCatalogTrack,
   AppleHomeSection,
   AppleLibraryPlaylist,
+  AppleLibrarySong,
+  AppleLibraryAlbum,
+  AppleLibraryArtist,
   ApplePlaylist,
   ApplePersonalRating,
   ApplePersonalRatingResourceType,
@@ -58,6 +61,9 @@ import {
   decodeStationPage,
 } from "./apple-catalog-station-decoders"
 import { AppleCatalogTransport } from "./apple-catalog-transport"
+import {
+  decodeLibrarySong, decodeLibraryAlbum, decodeLibraryArtist, decodeLibraryAlbumTracks,
+} from "./apple-library-decoders"
 import type { PlaybackLogger } from "./playback-log"
 import type { Fetch } from "./token-service"
 
@@ -437,6 +443,49 @@ export class AppleCatalogProvider implements MusicProvider<AppleCatalogTrack> {
     return this.requestPage(url, path, options, true, (value, nextCursor) => ({
       items: decodeHomeSections(value),
       nextCursor,
+    }))
+  }
+
+  getLibrarySongs(options: SearchOptions = {}): Promise<SearchPage<AppleLibrarySong>> {
+    return this.getLibraryPage("/v1/me/library/songs", options, decodeLibrarySong)
+  }
+
+  getLibraryAlbums(options: SearchOptions = {}): Promise<SearchPage<AppleLibraryAlbum>> {
+    return this.getLibraryPage("/v1/me/library/albums", options, decodeLibraryAlbum)
+  }
+
+  getLibraryArtists(options: SearchOptions = {}): Promise<SearchPage<AppleLibraryArtist>> {
+    return this.getLibraryPage("/v1/me/library/artists", options, decodeLibraryArtist)
+  }
+
+  async getLibraryAlbumTracks(
+    resourceId: string, options: SearchOptions = {},
+  ): Promise<SearchPage<AppleLibrarySong>> {
+    if (!isResourceId(resourceId)) throw new AppleCatalogError("invalid_request")
+    const path = `/v1/me/library/albums/${resourceId}/tracks`
+    const url = options.cursor
+      ? this.validateCursor(options.cursor, path)
+      : collectionUrl(path, this.limit)
+    return this.requestPage(url, path, options, true, (value, nextCursor) => ({
+      items: decodeLibraryAlbumTracks(value), nextCursor,
+    }))
+  }
+
+  async getLibraryArtistAlbums(
+    resourceId: string, options: SearchOptions = {},
+  ): Promise<SearchPage<AppleLibraryAlbum>> {
+    if (!isResourceId(resourceId)) throw new AppleCatalogError("invalid_request")
+    return this.getLibraryPage(`/v1/me/library/artists/${resourceId}/albums`, options, decodeLibraryAlbum)
+  }
+
+  private async getLibraryPage<T>(
+    path: string, options: SearchOptions, decode: (value: unknown) => T | null,
+  ): Promise<SearchPage<T>> {
+    const url = options.cursor
+      ? this.validateCursor(options.cursor, path)
+      : collectionUrl(path, this.limit)
+    return this.requestPage(url, path, options, true, (value, nextCursor) => ({
+      items: decodeCollection(value, decode), nextCursor,
     }))
   }
 
