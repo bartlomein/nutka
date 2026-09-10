@@ -1,27 +1,30 @@
-import { chmod, mkdir, mkdtemp, readFile, rm } from "node:fs/promises"
-import { homedir, tmpdir } from "node:os"
-import { join } from "node:path"
-
-import puppeteer, { type Browser, type Page } from "puppeteer-core"
-
-import type {
-  AppleCatalogTrack,
-  PlaybackRepeatMode,
-  PlaybackShuffleMode,
-} from "../core/types"
-import type { PlaybackBrowserSnapshot } from "./apple-playback-protocol"
+import type { AppleCatalogTrack } from "../core/types"
 import {
-  isPlaybackDocumentUrl,
-  loopbackPlaybackUrl,
-} from "./apple-playback-origin"
+  launchPuppeteerPlaybackBrowser,
+  type PlaybackProbeBrowser,
+  type PlaybackProbeSnapshot,
+} from "./apple-playback-browser"
+import { loopbackPlaybackUrl } from "./apple-playback-origin"
+import { detectChromiumAudioSink } from "./chromium-process"
 import { requestDeveloperToken, type Fetch } from "./token-service"
-import { ChromiumAudioQualityTracker } from "./chromium-audio-quality"
 
-const PAGE_READY_TIMEOUT_MS = 30_000
+export {
+  launchPuppeteerPlaybackBrowser,
+  type PlaybackProbeBrowser,
+  type PlaybackProbeControl,
+  type PlaybackProbeSnapshot,
+} from "./apple-playback-browser"
+export {
+  applePlaybackProfilePath,
+  defaultChromiumExecutablePath,
+  isDescendantProcess,
+  playbackBrowserEnvironment,
+  readBoundedProcessOutput,
+  type BoundedOutputProcess,
+} from "./chromium-process"
+
 const PLAYBACK_START_TIMEOUT_MS = 30_000
 const CONTROL_TIMEOUT_MS = 10_000
-const MAX_PACTL_OUTPUT_BYTES = 256 * 1024
-const PACTL_TIMEOUT_MS = 3_000
 
 export type ApplePlaybackProbeErrorCode =
   | "invalid_track"
@@ -42,29 +45,6 @@ export class ApplePlaybackProbeError extends Error {
     super(probeErrorMessage(code))
     this.name = "ApplePlaybackProbeError"
   }
-}
-
-export type PlaybackProbeSnapshot = PlaybackBrowserSnapshot
-
-export type PlaybackProbeControl =
-  | "play"
-  | "pause"
-  | "resume"
-  | "previous"
-  | "next"
-  | "stop"
-
-export interface PlaybackProbeBrowser {
-  readonly processId: number | null
-  initialize(developerToken: string, musicUserToken: string): Promise<void>
-  setQueue(resourceIds: readonly string[]): Promise<void>
-  setStation(resourceId: string): Promise<void>
-  setShuffleMode(mode: PlaybackShuffleMode): Promise<void>
-  setRepeatMode(mode: PlaybackRepeatMode): Promise<void>
-  click(control: PlaybackProbeControl): Promise<void>
-  seek(positionSeconds: number): Promise<void>
-  snapshot(): Promise<PlaybackProbeSnapshot>
-  close(): Promise<void>
 }
 
 export interface ApplePlaybackProbeResult {
@@ -315,313 +295,6 @@ function classifySnapshotError(
     return new ApplePlaybackProbeError("authorization_rejected")
   }
   return new ApplePlaybackProbeError(fallback)
-}
-
-type PlaybackPageGlobal = typeof globalThis & {
-  __nutkaPlayback: {
-    initialize(
-      developerToken: string,
-      musicUserToken: string,
-    ): Promise<{ authorized: boolean }>
-    setQueue(resourceIds: readonly string[]): void
-    setStation(resourceId: string): void
-    setShuffleMode(mode: PlaybackShuffleMode): void
-    setRepeatMode(mode: PlaybackRepeatMode): void
-    snapshot(): PlaybackProbeSnapshot
-    seek(positionSeconds: number): Promise<void>
-  }
-}
-
-export async function launchPuppeteerPlaybackBrowser(
-  executablePath: string,
-  playbackUrl: string,
-  persistentProfilePath?: string,
-): Promise<PlaybackProbeBrowser> {
-  const profilePath = persistentProfilePath ?? await mkdtemp(join(tmpdir(), "nutka-playback-"))
-  if (persistentProfilePath) {
-    await mkdir(profilePath, { recursive: true })
-  }
-  await chmod(profilePath, 0o700)
-  let browser: Browser | undefined
-  try {
-    browser = await puppeteer.launch({
-      executablePath,
-      headless: true,
-      pipe: true,
-      userDataDir: profilePath,
-      ignoreDefaultArgs: ["--mute-audio"],
-      env: playbackBrowserEnvironment(process.env),
-    })
-    const page = await browser.newPage()
-    const audioQuality = new ChromiumAudioQualityTracker()
-    try {
-      const media = await page.createCDPSession()
-      media.on("Media.playerPropertiesChanged", (event) => {
-        audioQuality.update(event.playerId, event.properties)
-      })
-      await media.send("Media.enable")
-    } catch {
-      // Playback remains usable when Chromium's optional media diagnostics are absent.
-    }
-    page.on("console", () => {})
-    page.on("pageerror", () => {})
-    await page.goto(playbackUrl, {
-      waitUntil: "domcontentloaded",
-      timeout: PAGE_READY_TIMEOUT_MS,
-    })
-    if (!isPlaybackDocumentUrl(page.url(), playbackUrl)) {
-      throw new Error("untrusted_playback_origin")
-    }
-    await page.waitForFunction(
-      "typeof window.__nutkaPlayback === 'object'",
-      { timeout: PAGE_READY_TIMEOUT_MS },
-    )
-    return new PuppeteerPlaybackBrowser(
-      browser,
-      page,
-      profilePath,
-      persistentProfilePath === undefined,
-      playbackUrl,
-      audioQuality,
-    )
-  } catch (error) {
-    await browser?.close().catch(() => {})
-    if (!persistentProfilePath) {
-      await rm(profilePath, { recursive: true, force: true }).catch(() => {})
-    }
-    throw error
-  }
-}
-
-class PuppeteerPlaybackBrowser implements PlaybackProbeBrowser {
-  constructor(
-    private readonly browser: Browser,
-    private readonly page: Page,
-    private readonly profilePath: string,
-    private readonly removeProfile: boolean,
-    private readonly playbackUrl: string,
-    private readonly audioQuality: ChromiumAudioQualityTracker,
-  ) {}
-
-  get processId(): number | null {
-    return this.browser.process()?.pid ?? null
-  }
-
-  async initialize(developerToken: string, musicUserToken: string): Promise<void> {
-    if (!isPlaybackDocumentUrl(this.page.url(), this.playbackUrl)) {
-      throw new Error("untrusted_playback_origin")
-    }
-    const result = await this.page.evaluate(
-      async ({ developerToken, musicUserToken }) => {
-        const playback = (globalThis as PlaybackPageGlobal).__nutkaPlayback
-        return playback.initialize(developerToken, musicUserToken)
-      },
-      { developerToken, musicUserToken },
-    )
-    if (result.authorized !== true) throw new Error("authorization_rejected")
-  }
-
-  async setQueue(resourceIds: readonly string[]): Promise<void> {
-    await this.page.evaluate((ids) => {
-      ;(globalThis as PlaybackPageGlobal).__nutkaPlayback.setQueue(ids)
-    }, [...resourceIds])
-  }
-
-  async setStation(resourceId: string): Promise<void> {
-    await this.page.evaluate((id) => {
-      ;(globalThis as PlaybackPageGlobal).__nutkaPlayback.setStation(id)
-    }, resourceId)
-  }
-
-  async setShuffleMode(mode: PlaybackShuffleMode): Promise<void> {
-    await this.page.evaluate((value) => {
-      ;(globalThis as PlaybackPageGlobal).__nutkaPlayback.setShuffleMode(value)
-    }, mode)
-  }
-
-  async setRepeatMode(mode: PlaybackRepeatMode): Promise<void> {
-    await this.page.evaluate((value) => {
-      ;(globalThis as PlaybackPageGlobal).__nutkaPlayback.setRepeatMode(value)
-    }, mode)
-  }
-
-  async click(control: PlaybackProbeControl): Promise<void> {
-    await this.page.click(`#${control}`)
-  }
-
-  async seek(positionSeconds: number): Promise<void> {
-    await this.page.evaluate(async (position) => {
-      await (globalThis as PlaybackPageGlobal).__nutkaPlayback.seek(position)
-    }, positionSeconds)
-  }
-
-  async snapshot(): Promise<PlaybackProbeSnapshot> {
-    const snapshot = await this.page.evaluate(
-      () => (globalThis as PlaybackPageGlobal).__nutkaPlayback.snapshot(),
-    )
-    return { ...snapshot, audioQuality: this.audioQuality.quality }
-  }
-
-  async close(): Promise<void> {
-    try {
-      await this.browser.close()
-    } finally {
-      if (this.removeProfile) {
-        await rm(this.profilePath, { recursive: true, force: true })
-      }
-    }
-  }
-}
-
-export function playbackBrowserEnvironment(
-  environment: NodeJS.ProcessEnv,
-): Record<string, string> {
-  const allowed = [
-    "DBUS_SESSION_BUS_ADDRESS",
-    "DISPLAY",
-    "HOME",
-    "LANG",
-    "LC_ALL",
-    "PATH",
-    "PIPEWIRE_REMOTE",
-    "PULSE_SERVER",
-    "TZ",
-    "WAYLAND_DISPLAY",
-    "XAUTHORITY",
-    "XDG_CACHE_HOME",
-    "XDG_CONFIG_HOME",
-    "XDG_RUNTIME_DIR",
-  ]
-  return Object.fromEntries(
-    allowed.flatMap((name) => environment[name] ? [[name, environment[name]]] : []),
-  )
-}
-
-async function detectChromiumAudioSink(browserProcessId: number | null): Promise<boolean> {
-  if (process.platform !== "linux" || !browserProcessId) return false
-  const child = Bun.spawn({
-    cmd: ["/usr/bin/pactl", "-f", "json", "list", "sink-inputs"],
-    env: playbackBrowserEnvironment(process.env),
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "ignore",
-  })
-  const result = await readBoundedProcessOutput(
-    child,
-    MAX_PACTL_OUTPUT_BYTES,
-    PACTL_TIMEOUT_MS,
-  )
-  if (!result || result.exitCode !== 0) return false
-  const output = result.output
-
-  let inputs: unknown
-  try {
-    inputs = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(output))
-  } catch {
-    return false
-  }
-  if (!Array.isArray(inputs)) return false
-  for (const input of inputs) {
-    if (!input || typeof input !== "object") continue
-    const properties = (input as { properties?: unknown }).properties
-    if (!properties || typeof properties !== "object" || Array.isArray(properties)) continue
-    const processId = Number((properties as Record<string, unknown>)["application.process.id"])
-    if (Number.isInteger(processId) && await isDescendantProcess(processId, browserProcessId)) {
-      return true
-    }
-  }
-  return false
-}
-
-export interface BoundedOutputProcess {
-  readonly stdout: ReadableStream<Uint8Array>
-  readonly exited: Promise<number>
-  kill(signal?: number | string): void
-}
-
-export async function readBoundedProcessOutput(
-  child: BoundedOutputProcess,
-  maximumBytes: number,
-  timeoutMs: number,
-): Promise<{ output: Uint8Array; exitCode: number } | null> {
-  const operation = (async () => {
-    const output = await readBoundedStream(child.stdout, maximumBytes)
-    if (!output) {
-      child.kill()
-      return null
-    }
-    return { output, exitCode: await child.exited }
-  })().catch(() => null)
-  const result = await Promise.race([
-    operation,
-    Bun.sleep(timeoutMs).then(() => null),
-  ])
-  if (!result) child.kill()
-  return result
-}
-
-async function readBoundedStream(
-  stream: ReadableStream<Uint8Array>,
-  maximumBytes: number,
-): Promise<Uint8Array | null> {
-  const reader = stream.getReader()
-  const chunks: Uint8Array[] = []
-  let length = 0
-  try {
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      length += value.byteLength
-      if (length > maximumBytes) {
-        await reader.cancel()
-        return null
-      }
-      chunks.push(value)
-    }
-  } finally {
-    reader.releaseLock()
-  }
-  const output = new Uint8Array(length)
-  let offset = 0
-  for (const chunk of chunks) {
-    output.set(chunk, offset)
-    offset += chunk.byteLength
-  }
-  return output
-}
-
-export function applePlaybackProfilePath(
-  environment: NodeJS.ProcessEnv = process.env,
-): string {
-  const stateHome = environment.XDG_STATE_HOME || join(homedir(), ".local", "state")
-  return join(stateHome, "nutka", "chromium-profile")
-}
-
-export function defaultChromiumExecutablePath(
-  platform: NodeJS.Platform = process.platform,
-): string {
-  return platform === "darwin"
-    ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-    : "/usr/bin/chromium"
-}
-
-export async function isDescendantProcess(
-  processId: number,
-  ancestorId: number,
-): Promise<boolean> {
-  let current = processId
-  for (let depth = 0; depth < 32 && current > 1; depth++) {
-    if (current === ancestorId) return true
-    try {
-      const status = await readFile(`/proc/${current}/status`, "utf8")
-      const match = status.match(/^PPid:\s+(\d+)$/m)
-      if (!match) return false
-      current = Number(match[1])
-    } catch {
-      return false
-    }
-  }
-  return false
 }
 
 function probeErrorMessage(code: ApplePlaybackProbeErrorCode): string {

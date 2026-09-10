@@ -4,6 +4,7 @@
   "description": "Open-source music in your terminal.",
   "type": "module",
   "private": true,
+  "packageManager": "bun@1.4.0",
   "bin": {
     "nutka": "src/index.ts"
   },

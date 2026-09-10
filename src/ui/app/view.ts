@@ -8,7 +8,6 @@ import {
   createAppPresenter,
   type AppRenderables,
   type AppView,
-  type AppViewModel,
 } from "./app-presenter"
 import {
   createOverlay,

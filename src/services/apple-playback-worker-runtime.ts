@@ -10,7 +10,7 @@ import {
 import {
   type PlaybackProbeBrowser,
   type PlaybackProbeSnapshot,
-} from "./apple-playback-probe"
+} from "./apple-playback-browser"
 import {
   PlaybackWorkerState,
   type PlaybackWorkerStateSnapshot,

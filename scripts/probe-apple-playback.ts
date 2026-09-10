@@ -4,10 +4,12 @@ import { AppleDeveloperTokenProvider } from "../src/services/apple-developer-tok
 import { startAppleLoopbackServer } from "../src/services/apple-loopback-server"
 import {
   ApplePlaybackProbeError,
-  applePlaybackProfilePath,
-  defaultChromiumExecutablePath,
   runApplePlaybackProbe,
 } from "../src/services/apple-playback-probe"
+import {
+  applePlaybackProfilePath,
+  defaultChromiumExecutablePath,
+} from "../src/services/chromium-process"
 import { createCredentialStore } from "../src/services/credentials"
 
 const signerUrl = process.env.NUTKA_APPLE_SIGNER_URL ?? "http://127.0.0.1:8788"

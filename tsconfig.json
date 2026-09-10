@@ -6,6 +6,9 @@
     "lib": ["ESNext"],
     "types": ["bun"],
     "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
     "noEmit": true,
     "skipLibCheck": true
   },

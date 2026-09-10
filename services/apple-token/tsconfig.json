@@ -9,6 +9,9 @@
       "@cloudflare/vitest-plugin/types"
     ],
     "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
     "noEmit": true,
     "isolatedModules": true,
     "verbatimModuleSyntax": true,

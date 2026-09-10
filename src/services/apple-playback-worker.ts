@@ -3,7 +3,7 @@ import {
   decodePlaybackWorkerRequest,
   encodePlaybackMessage,
 } from "./apple-playback-protocol"
-import { launchPuppeteerPlaybackBrowser } from "./apple-playback-probe"
+import { launchPuppeteerPlaybackBrowser } from "./apple-playback-browser"
 import { PipeWireSpectrumSource } from "./pipewire-audio-analysis"
 import { ApplePlaybackWorkerRuntime } from "./apple-playback-worker-runtime"
 

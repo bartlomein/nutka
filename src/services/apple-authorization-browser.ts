@@ -6,7 +6,7 @@ import {
   applePlaybackProfilePath,
   defaultChromiumExecutablePath,
   playbackBrowserEnvironment,
-} from "./apple-playback-probe"
+} from "./chromium-process"
 
 const NAVIGATION_TIMEOUT_MS = 30_000
 const MAX_BROWSER_TOKEN_LENGTH = 128

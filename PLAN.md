@@ -108,7 +108,8 @@ MusicKit through a private pipe and the TUI renders only worker-confirmed state.
   relationships, filtering, refresh, and catalog-backed playback
 - harden and package login persistence across supported platforms
 - package the `nutka` executable
-- add macOS and Linux CI builds, then test Windows
+- [x] add macOS and Linux CI typechecks and automated tests
+- add packaged executable builds, then test Windows
 
 ## Important risks
 
@@ -129,6 +130,7 @@ a playback implementation.
 
 ## Immediate next action
 
-Prove the worker on macOS, then package the executable and add Linux/macOS CI.
+Prove the worker on macOS, then package the executable. Linux/macOS CI checks
+are configured in `.github/workflows/check.yml`.
 Library browsing is implemented; uploaded songs without a usable catalog ID
 remain visible but cannot play through the current catalog-only playback worker.

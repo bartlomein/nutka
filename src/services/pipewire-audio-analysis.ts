@@ -1,7 +1,7 @@
 import {
   isDescendantProcess,
   playbackBrowserEnvironment,
-} from "./apple-playback-probe"
+} from "./chromium-process"
 import { PLAYBACK_SPECTRUM_BAND_COUNT } from "./apple-playback-protocol"
 
 const sampleRate = 48_000

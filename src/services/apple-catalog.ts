@@ -2,7 +2,6 @@ import type {
   AppleArtistSectionName,
   AppleArtistSectionPage,
   AppleCatalogAlbum,
-  AppleCatalogAlbumSummary,
   AppleCatalogArtist,
   AppleCatalogPlaylist,
   AppleCatalogStation,
@@ -50,7 +49,6 @@ import {
   filteredCollectionUrl,
 } from "./apple-catalog-pagination"
 import {
-  decodeCatalogPlaylist,
   decodeLibraryPlaylist,
   decodePlaylistTracks,
 } from "./apple-catalog-playlist-decoders"
@@ -103,7 +101,7 @@ export class AppleCatalogProvider implements MusicProvider<AppleCatalogTrack> {
   private readonly logger: PlaybackLogger
 
   constructor(
-    private readonly serviceUrl: string,
+    serviceUrl: string,
     readonly storefront: string,
     options: AppleCatalogProviderOptions = {},
   ) {
@@ -748,10 +746,6 @@ export class AppleCatalogProvider implements MusicProvider<AppleCatalogTrack> {
 
   private validateCursor(cursor: string, expectedPath: string): URL {
     return this.pagination.validateCursor(cursor, expectedPath)
-  }
-
-  private decodeNextCursor(value: unknown, expectedPath: string): string | null {
-    return this.pagination.decodeNextCursor(value, expectedPath)
   }
 
   private decodeRelationshipNextCursor(

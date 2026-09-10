@@ -12,7 +12,7 @@ import type {
   PlaybackProbeBrowser,
   PlaybackProbeControl,
   PlaybackProbeSnapshot,
-} from "./apple-playback-probe"
+} from "./apple-playback-browser"
 import {
   ApplePlaybackWorkerRuntime,
   type ApplePlaybackWorkerRuntimeOptions,

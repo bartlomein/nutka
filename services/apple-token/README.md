@@ -58,3 +58,11 @@ bun run deploy
 
 Cloudflare's rate-limit counters are local to each Cloudflare location and are
 eventually consistent. The Worker fails closed if the binding call fails.
+
+## Development dependencies
+
+Miniflare currently pins `sharp` to `0.35.2`. The package override selects
+`0.35.4` or a compatible patch to address
+[GHSA-rgj7-g3m4-5g8c](https://github.com/advisories/GHSA-rgj7-g3m4-5g8c).
+Remove the override once Miniflare requires a patched release. This dependency
+belongs to the local Cloudflare tooling; the deployed signer only imports Hono.

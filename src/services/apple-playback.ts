@@ -14,14 +14,13 @@ import type {
 import {
   MAX_PLAYBACK_QUEUE_ITEMS,
   type PlaybackWorkerResponse,
-  type PlaybackWorkerTrack,
   type PlaybackWorkerItem,
 } from "./apple-playback-protocol"
 import { loopbackPlaybackUrl } from "./apple-playback-origin"
 import {
   applePlaybackProfilePath,
   defaultChromiumExecutablePath,
-} from "./apple-playback-probe"
+} from "./chromium-process"
 import {
   ApplePlaybackError,
   createProcessPlaybackWorkerClient,
@@ -85,7 +84,6 @@ export class ApplePlaybackController implements PlaybackController<AppleCatalogT
   private workerGeneration = 0
   private nextLoadId = 1
   private activeLoadId: number | null = null
-  private activeQueuePosition = -1
   private commandRunning = false
   private authorizationEnabled = true
   private analysisEnabled = true
@@ -130,7 +128,6 @@ export class ApplePlaybackController implements PlaybackController<AppleCatalogT
       const tracks = playableQueue(track, upcomingTracks)
       const loadId = this.nextLoadId++
       this.activeLoadId = null
-      this.activeQueuePosition = -1
       this.analysisAcceptingFrames = false
       this.setAnalysis(null)
       this.queues.set(loadId, tracks)
@@ -186,7 +183,6 @@ export class ApplePlaybackController implements PlaybackController<AppleCatalogT
       const generation = this.workerGeneration
       const loadId = this.nextLoadId++
       this.activeLoadId = null
-      this.activeQueuePosition = -1
       this.analysisAcceptingFrames = false
       this.setAnalysis(null)
       this.stations.set(loadId, station)
@@ -299,7 +295,6 @@ export class ApplePlaybackController implements PlaybackController<AppleCatalogT
     this.queues.clear()
     this.stations.clear()
     this.activeLoadId = null
-    this.activeQueuePosition = -1
     this.setAnalysis(null)
     this.setSnapshot(idleSnapshot)
     await worker?.dispose().catch((error) => {
@@ -431,7 +426,6 @@ export class ApplePlaybackController implements PlaybackController<AppleCatalogT
     if (this.disposed) return
     if (snapshot.status === "idle" || snapshot.loadId === null) {
       this.activeLoadId = null
-      this.activeQueuePosition = -1
       this.setAnalysis(null)
       this.setSnapshot({
         ...idleSnapshot,
@@ -481,7 +475,6 @@ export class ApplePlaybackController implements PlaybackController<AppleCatalogT
       (snapshot.resourceId ? resolveTrack(snapshot.resourceId) : undefined)
     if (!catalogTrack) return
     this.activeLoadId = snapshot.loadId
-    this.activeQueuePosition = currentIndex
     const currentTrack = snapshot.audioQuality
       ? { ...catalogTrack, audioQuality: snapshot.audioQuality }
       : catalogTrack
@@ -541,7 +534,6 @@ export class ApplePlaybackController implements PlaybackController<AppleCatalogT
     this.queues.clear()
     this.stations.clear()
     this.activeLoadId = null
-    this.activeQueuePosition = -1
     this.setAnalysis(null)
     this.setSnapshot({ ...idleSnapshot, errorCode })
   }

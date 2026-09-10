@@ -12,7 +12,7 @@ import {
   type AppleAuthorizationBrowserPage,
 } from "./apple-authorization-browser"
 import type { AppleAuthManagerOptions } from "./apple-auth"
-import { playbackBrowserEnvironment } from "./apple-playback-probe"
+import { playbackBrowserEnvironment } from "./chromium-process"
 
 const token = "browser-secret-NOT-IN-PROCESS-OPTIONS"
 const authorizationUrl = `http://127.0.0.1:8787/authorize#browserToken=${token}`

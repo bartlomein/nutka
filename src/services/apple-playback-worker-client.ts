@@ -8,7 +8,7 @@ import {
   type PlaybackWorkerResponse,
   type PlaybackWorkerTrack,
 } from "./apple-playback-protocol"
-import { playbackBrowserEnvironment } from "./apple-playback-probe"
+import { playbackBrowserEnvironment } from "./chromium-process"
 
 const INITIALIZE_TIMEOUT_MS = 45_000
 const PLAY_TIMEOUT_MS = 35_000
