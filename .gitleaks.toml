@@ -1,0 +1,14 @@
+title = "Nutka secret scanning"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "private-key"
+
+[[rules.allowlists]]
+description = "Intentionally invalid PEM used to test rejection, never a signing key"
+condition = "AND"
+paths = ['''(^|/)services/apple-token/test/token\.test\.ts$''']
+regexTarget = "match"
+regexes = ['''^-----BEGIN PRIVATE KEY-----\\nnot base64!\\n-----END PRIVATE KEY-----"\),''']

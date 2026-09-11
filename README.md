@@ -60,6 +60,7 @@ Nutka runs from source. Executable packaging and macOS playback verification
 remain pending. Uploaded library songs without an Apple catalog ID remain
 visible but cannot play through the current worker.
 
+For packaging and public downloads, see the [release checklist](docs/RELEASING.md).
 For signer hosting, see [Cloudflare deployment](docs/DEPLOY_CLOUDFLARE.md).
 The [Apple Music integration boundaries](docs/APPLE_COMPLIANCE.md) record the
 credential handling and production deployment requirements.

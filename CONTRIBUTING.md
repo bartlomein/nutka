@@ -14,6 +14,12 @@ They need no Apple or Cloudflare account. Loopback-server tests bind temporary
 ports on `127.0.0.1`, and signer tests start Cloudflare's local Worker runtime.
 Restricted containers must allow those operations.
 
+CI also scans the full Git history with Gitleaks. With Gitleaks 8.30.1 installed,
+run `gitleaks git --log-opts="--all" --redact` locally. Before committing, use
+`gitleaks git --pre-commit --staged --redact` to scan staged changes. The scanner
+configuration excludes only the exact invalid PEM fixture used in a rejection
+test; real keys in test files still fail the scan.
+
 ## Working on a change
 
 Run `bun run dev` for the empty terminal interface. Live playback setup is in
