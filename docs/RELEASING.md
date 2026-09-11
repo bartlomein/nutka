@@ -7,7 +7,7 @@ so a separate website or download server is optional.
 
 This is a plan, not a record of a completed deployment. As of September 10,
 2026, Nutka runs from source, executable packaging remains pending, and real
-playback has been verified on Linux. macOS playback verification is pending.
+playback has been verified on Linux. Linux is the only supported platform.
 
 ## What goes where
 
@@ -28,8 +28,7 @@ Apple passwords, Music User Tokens, or playback data.
   support, with downloadable archives and checksums.
 - [ ] Test installation, login, playback, saved login, and sign-out on a clean
   machine without the development checkout.
-- [ ] Choose the initial supported platforms. A Linux preview is the proposed
-  starting point; verify real macOS playback before advertising macOS support.
+- [ ] Release a Linux preview. Other operating systems are not currently supported.
 - [ ] Complete the existing pre-production Apple Developer Support confirmation
   described in [Apple Music integration boundaries](APPLE_COMPLIANCE.md).
   That document calls for confirmation of the open-source terminal client,
@@ -49,8 +48,8 @@ Apple passwords, Music User Tokens, or playback data.
 
 Users currently need an Apple Music subscription, an installed
 Chromium-compatible browser, and a working system keyring for saved login.
-Linux uses `secret-tool` with an unlocked Secret Service keyring; macOS uses
-Keychain. Source installs also require Bun. Verify whether the final packaged
+Linux uses `secret-tool` with an unlocked Secret Service keyring. Source installs
+also require Bun. Verify whether the final packaged
 build removes the separate Bun requirement before documenting installation.
 
 ## Suggested next coding step

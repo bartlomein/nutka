@@ -34,13 +34,9 @@ jobs:
       - name: Scan full history
         run: '"$RUNNER_TEMP/gitleaks" git --log-opts="--all" --redact'
   check:
-    name: Check on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
+    name: Check on Linux
+    runs-on: ubuntu-latest
     timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
     env:
       CI: "true"
       WRANGLER_SEND_METRICS: "false"

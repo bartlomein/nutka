@@ -17,7 +17,7 @@ Open-source music in your terminal.
 2. Normal use must never show a browser window.
 3. A visible browser is acceptable only when a provider requires interactive login.
 4. Playback may use a hidden background browser process if Apple Music requires MusicKit JS.
-5. macOS and Linux are first-class targets; Windows should remain possible.
+5. Linux is the only supported platform for the initial release.
 
 ## MVP
 
@@ -97,7 +97,6 @@ MusicKit through a private pipe and the TUI renders only worker-confirmed state.
 - [x] open a selected song's album through Apple resource relationships
 - [x] browse personalized and saved playlists with paginated track details
 - [x] build the isolated headless Chromium playback probe
-- prove one Apple Music track can play through MusicKit JS on macOS
 - [x] prove the same approach on Linux
 - [x] run the playback process with no visible browser window after login
 - [x] bridge play, pause, seek, track changes, and errors back to the TUI
@@ -108,8 +107,8 @@ MusicKit through a private pipe and the TUI renders only worker-confirmed state.
   relationships, filtering, refresh, and catalog-backed playback
 - harden and package login persistence across supported platforms
 - package the `nutka` executable
-- [x] add macOS and Linux CI typechecks and automated tests
-- add packaged executable builds, then test Windows
+- [x] add Linux CI typechecks and automated tests
+- add packaged Linux executable builds
 
 ## Important risks
 
@@ -130,7 +129,7 @@ a playback implementation.
 
 ## Immediate next action
 
-Prove the worker on macOS, then package the executable. Linux/macOS CI checks
+Package the Linux executable. Linux CI checks
 are configured in `.github/workflows/check.yml`.
 Library browsing is implemented; uploaded songs without a usable catalog ID
 remain visible but cannot play through the current catalog-only playback worker.

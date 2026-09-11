@@ -1,7 +1,6 @@
 const DEFAULT_TIMEOUT_MS = 5_000
 const MAX_TOKEN_BYTES = 16 * 1024
 const MAX_RAW_OUTPUT_BYTES = MAX_TOKEN_BYTES + 2
-const MAX_ENCODED_OUTPUT_BYTES = Math.ceil((MAX_TOKEN_BYTES * 4) / 3) + 2
 
 const LINUX_TOOL = "/usr/bin/secret-tool"
 const LINUX_ATTRIBUTES = [
@@ -20,11 +19,6 @@ const LEGACY_LINUX_ATTRIBUTES = [
   "version",
   "1",
 ] as const
-
-const MACOS_TOOL = "/usr/bin/security"
-const MACOS_SERVICE = "dev.nutka.cli"
-const LEGACY_MACOS_SERVICE = "dev.nuta.cli"
-const MACOS_ACCOUNT = "apple-music-user-token.v1"
 
 export interface CredentialStore {
   load(): Promise<string | null>
@@ -104,12 +98,6 @@ export function createCredentialStore(
       ),
     )
   }
-  if (platform === "darwin") {
-    return createMigratingStore(
-      createMacOSStore(runner, timeoutMs, environment, MACOS_SERVICE),
-      createMacOSStore(runner, timeoutMs, environment, LEGACY_MACOS_SERVICE),
-    )
-  }
   throw new CredentialStoreError("unsupported_platform")
 }
 
@@ -168,97 +156,6 @@ function createLinuxStore(
         "delete",
       )
       if (result.exitCode !== 0 && result.exitCode !== 1) requireSuccess(result)
-    },
-  }
-}
-
-function createMacOSStore(
-  runner: ProcessRunner,
-  timeoutMs: number,
-  env: Readonly<Record<string, string>>,
-  service: string,
-): CredentialStore {
-  return {
-    async load() {
-      const result = await run(
-        runner,
-        {
-          executable: MACOS_TOOL,
-          args: [
-            "find-generic-password",
-            "-s",
-            service,
-            "-a",
-            MACOS_ACCOUNT,
-            "-w",
-          ],
-          timeoutMs,
-          maxStdoutBytes: MAX_ENCODED_OUTPUT_BYTES,
-          env,
-        },
-        "load",
-      )
-      if (result.exitCode === 44) return null
-      requireSuccess(result)
-
-      const encoded = decodeToolToken(result.stdout, MAX_ENCODED_OUTPUT_BYTES)
-      if (!isUnpaddedBase64Url(encoded)) {
-        throw new CredentialStoreError("invalid_data")
-      }
-
-      let decoded: Uint8Array
-      try {
-        decoded = Uint8Array.from(Buffer.from(encoded, "base64url"))
-      } catch {
-        throw new CredentialStoreError("invalid_data")
-      }
-      if (toBase64Url(decoded) !== encoded) {
-        throw new CredentialStoreError("invalid_data")
-      }
-      return decodeToken(decoded)
-    },
-
-    async save(token) {
-      const encoded = toBase64Url(validateToken(token))
-      if (!isUnpaddedBase64Url(encoded)) {
-        throw new CredentialStoreError("invalid_data")
-      }
-
-      const command = `add-generic-password -U -s ${service} -a ${MACOS_ACCOUNT} -w ${encoded}\n`
-      const result = await run(
-        runner,
-        {
-          executable: MACOS_TOOL,
-          args: ["-q", "-i"],
-          stdin: new TextEncoder().encode(command),
-          timeoutMs,
-          maxStdoutBytes: 1,
-          env,
-        },
-        "save",
-      )
-      requireSuccess(result)
-    },
-
-    async delete() {
-      const result = await run(
-        runner,
-        {
-          executable: MACOS_TOOL,
-          args: [
-            "delete-generic-password",
-            "-s",
-            service,
-            "-a",
-            MACOS_ACCOUNT,
-          ],
-          timeoutMs,
-          maxStdoutBytes: 1,
-          env,
-        },
-        "delete",
-      )
-      if (result.exitCode !== 0 && result.exitCode !== 44) requireSuccess(result)
     },
   }
 }
@@ -354,9 +251,7 @@ function createProcessEnvironment(
           "DISPLAY",
           "WAYLAND_DISPLAY",
         ]
-      : platform === "darwin"
-        ? ["HOME", "USER", "LOGNAME"]
-        : []
+      : []
   const env: Record<string, string> = {}
   for (const name of names) {
     const value = source[name]
@@ -402,28 +297,6 @@ function decodeToolToken(stdout: Uint8Array, maxBytes: number): string {
     throw new CredentialStoreError("invalid_data")
   }
   return value
-}
-
-function decodeToken(bytes: Uint8Array): string {
-  if (bytes.byteLength === 0 || bytes.byteLength > MAX_TOKEN_BYTES) {
-    throw new CredentialStoreError("invalid_data")
-  }
-  let token: string
-  try {
-    token = new TextDecoder("utf-8", { fatal: true }).decode(bytes)
-  } catch {
-    throw new CredentialStoreError("invalid_data")
-  }
-  validateToken(token)
-  return token
-}
-
-function isUnpaddedBase64Url(value: string): boolean {
-  return value.length > 0 && /^[A-Za-z0-9_-]+$/.test(value)
-}
-
-function toBase64Url(bytes: Uint8Array): string {
-  return Buffer.from(bytes).toString("base64url")
 }
 
 function validateTimeout(value: number): number {

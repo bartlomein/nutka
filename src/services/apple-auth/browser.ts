@@ -75,10 +75,7 @@ async function closeBrowserSession(
 }
 
 export async function openBrowser(url: string, signal?: AbortSignal): Promise<void> {
-  const command =
-    process.platform === "darwin"
-      ? ["/usr/bin/open", url]
-      : ["/usr/bin/xdg-open", url]
+  const command = ["/usr/bin/xdg-open", url]
   const processHandle = Bun.spawn(command, {
     stdout: "ignore",
     stderr: "ignore",

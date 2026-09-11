@@ -3,7 +3,7 @@
 Start with the [local development setup](../README.md#run-locally).
 Apple Music login and playback require a subscription, an installed Chromium
 browser, and a configured developer-token signer. On Linux, install
-`secret-tool` and run an unlocked Secret Service keyring. macOS uses Keychain.
+`secret-tool` and run an unlocked Secret Service keyring.
 
 To run the local Cloudflare signer and Apple-enabled client together, run:
 
@@ -33,7 +33,7 @@ With real Apple credentials configured, open `Ctrl+P` and run `Sign in to Apple
 Music`. Nutka opens one visible Chromium window using its private playback
 profile. The localhost page connects through a one-time URL fragment, Apple
 handles account login, and Nutka validates the resulting session before storing
-it in Secret Service on Linux or Keychain on macOS. Nutka closes the window
+it in Linux Secret Service. Nutka closes the window
 before playback starts. No pairing code or plaintext credential fallback is
 used.
 
@@ -55,8 +55,7 @@ bun run playback:probe
 ```
 
 Authorization opens one visible browser window. Normal playback and the probe
-then use `/usr/bin/chromium` on Linux or Google Chrome's standard application
-path on macOS, download no browser, and open no window.
+then use `/usr/bin/chromium`, download no browser, and open no window.
 The probe tests one real song for 36 seconds plus pause, resume, seek, and stop.
 Set `NUTKA_CHROMIUM_PATH` to select another installed Chrome-compatible browser.
 The Linux worker passes with full-track playback and PipeWire audio.

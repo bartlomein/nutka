@@ -21,7 +21,7 @@ They have separate dependency manifests and lockfiles.
 | `src/services/apple-playback*` | Playback controller, worker protocol, worker runtime, and browser host. |
 | `src/services/chromium-process.ts` | Restricted Chromium environment, profile paths, and process inspection. |
 | `src/services/apple-loopback-server.ts` | Loopback-only browser authorization and playback routes. |
-| `src/services/credentials.ts` | Linux Secret Service and macOS Keychain adapters. |
+| `src/services/credentials.ts` | Linux Secret Service credential adapter. |
 | `scripts/` | Development launchers, environment filtering, and playback probe. |
 | `services/apple-token/src/` | Worker routing, configuration, rate limiting, and ES256 token signing. |
 

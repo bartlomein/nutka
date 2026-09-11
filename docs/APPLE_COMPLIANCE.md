@@ -18,7 +18,7 @@ Worker through its embedded loopback service. The Worker receives no Music User
 Token, authorization capability, playback state, or Apple user identity. The
 local authorization broker passes a Music User Token from Apple-hosted MusicKit
 JS to the same machine through one-time loopback capabilities. Nutka validates
-it before storing it in Linux Secret Service or macOS Keychain. There is no
+it before storing it in Linux Secret Service. There is no
 plaintext fallback.
 
 Nutka starts and stops the authorization routes with the client process and
@@ -69,7 +69,7 @@ fall back to the microphone, another application, or the whole system output.
 Before hosting the service or distributing a public Apple-enabled build, ask
 Apple Developer Support to confirm the exact architecture: an open-source
 terminal client, a hosted developer-token endpoint, and MusicKit JS running in a
-hidden browser process on macOS and Linux after interactive login. The Linux DRM
+hidden browser process on Linux after interactive login. The Linux DRM
 and headless playback path remains a technical prototype rather than a supported
 production capability. Full-track Linux playback, PipeWire audio, queue loading,
 pause, resume, seek, stop, process supervision, and TUI state synchronization are
