@@ -1,6 +1,26 @@
 import { describe, expect, test } from "bun:test"
 
-import { parseOmarchyTheme } from "./theme"
+import { approvedTheme, loadTheme, parseOmarchyTheme } from "./theme"
+
+test("uses the approved console palette unless an explicit theme is configured", () => {
+  expect(approvedTheme).toEqual({
+    background: "#0E0D12",
+    surface: "#121117",
+    surfaceRaised: "#17151D",
+    overlay: "#0B0A0F",
+    selection: "#30242E",
+    border: "#3F3B47",
+    text: "#F0EBF2",
+    muted: "#928B9E",
+    accent: "#B29CFF",
+    amber: "#FF6D66",
+    visualizerLow: "#8D78CF",
+    visualizerMid: "#B29CFF",
+    visualizerHigh: "#FF6D66",
+    visualizerPeak: "#F0EBF2",
+  })
+  expect(loadTheme({ XDG_STATE_HOME: "/tmp/omarchy" })).toEqual(approvedTheme)
+})
 
 describe("parseOmarchyTheme", () => {
   test("maps Omarchy semantic colors to the Nutka interface", () => {

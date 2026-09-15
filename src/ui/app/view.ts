@@ -12,8 +12,11 @@ import {
 import {
   createOverlay,
   createTrackRow,
+  createNavigationRow,
+  createQueueRow,
   maxContextRows,
   maxPaletteRows,
+  maxQueueRows,
   maxTrackRows,
   setTrackRowColor,
   setTrackRowContent,
@@ -35,6 +38,8 @@ export function createAppView(
     width: "100%",
     height: "100%",
     flexDirection: "column",
+    border: true,
+    borderColor: theme.border,
     backgroundColor: theme.background,
   })
 
@@ -66,6 +71,9 @@ export function createAppView(
     flexGrow: 1,
     padding: 1,
     flexDirection: "column",
+    border: true,
+    borderColor: theme.border,
+    backgroundColor: theme.surface,
     overflow: "hidden",
   })
   const workspaceHeader = new BoxRenderable(renderer, {
@@ -105,6 +113,125 @@ export function createAppView(
     onSeek: options.onSeek,
     visualizer: options.visualizerSettings,
   })
+  const mainColumn = new BoxRenderable(renderer, {
+    id: "main-column",
+    width: 80,
+    height: "100%",
+    flexDirection: "column",
+    rowGap: 1,
+    padding: 1,
+    border: true,
+    borderColor: theme.border,
+    backgroundColor: theme.surface,
+    overflow: "hidden",
+  })
+  mainColumn.add(workspace)
+  mainColumn.add(player.root)
+
+  const navigationRail = new BoxRenderable(renderer, {
+    id: "navigation-rail",
+    width: 22,
+    height: "100%",
+    flexDirection: "column",
+    border: true,
+    borderColor: theme.border,
+    backgroundColor: theme.surface,
+  })
+  const navigationPanel = new BoxRenderable(renderer, {
+    id: "navigation-panel",
+    width: "100%",
+    height: "100%",
+    paddingX: 1,
+    flexDirection: "column",
+    backgroundColor: theme.surface,
+  })
+  navigationPanel.add(text(renderer, "navigation-title", "NAVIGATION", theme.accent))
+  const navigationRows = [
+    ["home", "Home", "g h"],
+    ["library", "Library", "g l"],
+    ["playlists", "Playlists", "g p"],
+    ["radio", "Radio", "g r"],
+    ["search", "Search", "g s"],
+    ["queue", "Queue", "g q"],
+  ].map(([destination, label, shortcut]) => {
+    const row = createNavigationRow(renderer, `navigation-${destination}`)
+    row.label.content = `  ${label}`
+    row.shortcut.content = shortcut
+    navigationPanel.add(row.box)
+    return row
+  })
+  const navigationLibraryTitle = text(renderer, "navigation-library-title", "LIBRARY", theme.accent)
+  navigationPanel.add(navigationLibraryTitle)
+  const libraryRows = [
+    ["songs", "Songs", "1"],
+    ["albums", "Albums", "2"],
+    ["artists", "Artists", "3"],
+  ].map(([section, label, shortcut]) => {
+    const row = createNavigationRow(renderer, `navigation-library-${section}`)
+    row.label.content = `  ${label}`
+    row.shortcut.content = shortcut
+    navigationPanel.add(row.box)
+    return row
+  })
+  const navigationControlsTitle = text(renderer, "navigation-controls-title", "CONTROLS", theme.accent)
+  navigationPanel.add(navigationControlsTitle)
+  const controlRows = [
+    ["visualizer", "Visualizer", "v"],
+    ["shuffle", "Shuffle", "s"],
+    ["repeat", "Repeat", "r"],
+  ].map(([control, label, shortcut]) => {
+    const row = createNavigationRow(renderer, `navigation-control-${control}`)
+    row.label.content = `  ${label}`
+    row.shortcut.content = shortcut
+    navigationPanel.add(row.box)
+    return row
+  })
+  navigationRail.add(navigationPanel)
+
+  const queueRail = new BoxRenderable(renderer, {
+    id: "queue-rail",
+    width: 30,
+    height: "100%",
+    flexDirection: "column",
+    border: true,
+    borderColor: theme.border,
+    backgroundColor: theme.surface,
+  })
+  const queuePanel = new BoxRenderable(renderer, {
+    id: "queue-panel",
+    width: "100%",
+    height: "100%",
+    paddingX: 1,
+    flexDirection: "column",
+    backgroundColor: theme.surface,
+  })
+  queuePanel.add(text(renderer, "queue-title", "QUEUE", theme.accent))
+  const queueNowPlaying = text(renderer, "queue-now-playing", "", theme.text)
+  const queueSummary = text(renderer, "queue-summary", "", theme.muted)
+  const queueEmpty = text(renderer, "queue-empty", "", theme.muted)
+  queuePanel.add(queueNowPlaying)
+  queuePanel.add(queueSummary)
+  queuePanel.add(queueEmpty)
+  const queueRows = Array.from({ length: maxQueueRows }, (_, index) => {
+    const row = createQueueRow(renderer, `queue-row-${index}`)
+    queuePanel.add(row.box)
+    return row
+  })
+  queueRail.add(queuePanel)
+
+  const shell = new BoxRenderable(renderer, {
+    id: "content-shell",
+    width: "100%",
+    flexGrow: 1,
+    flexDirection: "row",
+    columnGap: 1,
+    padding: 1,
+    overflow: "hidden",
+  })
+  shell.add(navigationRail)
+  shell.add(mainColumn)
+  shell.add(queueRail)
+
   const footer = new BoxRenderable(renderer, {
     id: "footer",
     width: "100%",
@@ -113,11 +240,11 @@ export function createAppView(
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    border: ["top"],
+    border: true,
     borderColor: theme.border,
     backgroundColor: theme.surfaceRaised,
   })
-  const mode = text(renderer, "mode", "NORMAL", theme.background, theme.accent)
+  const mode = text(renderer, "mode", "NORMAL", theme.background, theme.amber)
   mode.width = 9
   const keyHelp = text(
     renderer,
@@ -132,8 +259,7 @@ export function createAppView(
   footer.add(keyHelp)
   footer.add(destinationHint)
   app.add(header)
-  app.add(workspace)
-  app.add(player.root)
+  app.add(shell)
   app.add(footer)
 
   const paletteOverlay = createOverlay(renderer, "palette-overlay", 20)
@@ -402,6 +528,8 @@ export function createAppView(
     header,
     breadcrumb,
     providerStatus,
+    shell,
+    mainColumn,
     workspace,
     workspaceHeader,
     workspaceTitle,
@@ -410,6 +538,19 @@ export function createAppView(
     tableHeader,
     trackRows,
     player,
+    navigationRail,
+    navigationPanel,
+    navigationLibraryTitle,
+    navigationControlsTitle,
+    navigationRows,
+    libraryRows,
+    controlRows,
+    queueRail,
+    queuePanel,
+    queueNowPlaying,
+    queueSummary,
+    queueEmpty,
+    queueRows,
     footer,
     mode,
     keyHelp,

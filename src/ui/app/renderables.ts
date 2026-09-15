@@ -9,6 +9,7 @@ import { theme } from "../theme"
 export const maxTrackRows = 30
 export const maxPaletteRows = 7
 export const maxContextRows = 8
+export const maxQueueRows = 8
 
 export interface TrackRowContent {
   title: string
@@ -31,6 +32,19 @@ export interface PaletteRow {
   box: BoxRenderable
   title: TextRenderable
   shortcut: TextRenderable
+}
+
+export interface NavigationRow {
+  box: BoxRenderable
+  label: TextRenderable
+  shortcut: TextRenderable
+}
+
+export interface QueueRow {
+  box: BoxRenderable
+  title: TextRenderable
+  detail: TextRenderable
+  duration: TextRenderable
 }
 
 export function text(
@@ -65,7 +79,7 @@ export function createOverlay(
     zIndex,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: theme.overlay,
+    backgroundColor: theme.overlay.length === 7 ? `${theme.overlay}D9` : theme.overlay,
     visible: false,
   })
 }
@@ -101,6 +115,66 @@ export function createTrackRow(
   box.add(year)
   box.add(time)
   return { box, title, artist, album, year, time }
+}
+
+export function createNavigationRow(
+  renderer: CliRenderer,
+  id: string,
+): NavigationRow {
+  const box = new BoxRenderable(renderer, {
+    id,
+    width: "100%",
+    height: 1,
+    flexDirection: "row",
+    columnGap: 1,
+    backgroundColor: theme.background,
+  })
+  const label = text(renderer, `${id}-label`, "", theme.text)
+  const shortcut = text(renderer, `${id}-shortcut`, "", theme.muted)
+  label.flexGrow = 1
+  shortcut.width = 6
+  box.add(label)
+  box.add(shortcut)
+  return { box, label, shortcut }
+}
+
+export function createQueueRow(
+  renderer: CliRenderer,
+  id: string,
+): QueueRow {
+  const box = new BoxRenderable(renderer, {
+    id,
+    width: "100%",
+    height: 2,
+    flexDirection: "row",
+    backgroundColor: theme.background,
+  })
+  const title = text(renderer, `${id}-title`, "", theme.text)
+  const detail = text(renderer, `${id}-detail`, "", theme.muted)
+  const duration = text(renderer, `${id}-duration`, "", theme.muted)
+  const body = new BoxRenderable(renderer, {
+    id: `${id}-body`,
+    width: "100%",
+    height: 2,
+    flexDirection: "column",
+  })
+  const titleLine = new BoxRenderable(renderer, {
+    id: `${id}-title-line`,
+    width: "100%",
+    height: 1,
+    flexDirection: "row",
+    columnGap: 1,
+  })
+  body.flexGrow = 1
+  title.flexGrow = 1
+  duration.width = 6
+  detail.width = "100%"
+  titleLine.add(title)
+  titleLine.add(duration)
+  body.add(titleLine)
+  body.add(detail)
+  box.add(body)
+  return { box, title, detail, duration }
 }
 
 export function setTrackRowContent(row: TrackRow, content: TrackRowContent): void {

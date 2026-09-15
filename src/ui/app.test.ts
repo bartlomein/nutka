@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test"
 
+import { consoleLayout } from "./app/app-presenter"
 import { createAppFixture } from "./test-support/app-fixture"
 
 const fixture = createAppFixture()
@@ -7,13 +8,32 @@ const { createApp } = fixture
 afterEach(fixture.destroy)
 
 describe("Nutka TUI: navigation and layout", () => {
+  test("keeps navigation and queue as independent rails around the dominant center", () => {
+    const wide = consoleLayout(150, 32)
+    expect(wide.showRails).toBe(true)
+    expect(wide.navigationWidth).toBeGreaterThan(0)
+    expect(wide.queueWidth).toBeGreaterThan(0)
+    expect(wide.centerWidth).toBeGreaterThan(wide.navigationWidth)
+    expect(wide.centerWidth).toBeGreaterThan(wide.queueWidth)
+    expect(wide.navigationWidth + wide.centerWidth + wide.queueWidth + 2).toBe(144)
+
+    expect(consoleLayout(119, 32).showRails).toBe(false)
+    expect(consoleLayout(150, 22).showRails).toBe(false)
+  })
+
   test("starts with an honest empty Apple Music workspace", async () => {
     await createApp({ tracks: [] })
     await fixture.setup.renderOnce()
     const frame = fixture.setup.captureCharFrame()
 
     expect(frame).toContain("Apple Music Home is not loaded yet")
+    expect(frame).toContain("NAVIGATION")
+    expect(frame).toContain("› Home")
+    expect(frame).toContain("QUEUE")
+    expect(frame).toContain("queue is empty")
     expect(frame).not.toContain("First Track")
+    expect(frame).not.toContain("▌")
+    expect(frame).not.toContain("┃")
 
     fixture.setup.mockInput.pressKey("g")
     fixture.setup.mockInput.pressKey("s")
@@ -84,6 +104,38 @@ describe("Nutka TUI: navigation and layout", () => {
     expect(frame).not.toContain("First Album")
     expect(frame).not.toContain("apple music")
     expect(frame).not.toContain("playlists")
+  })
+
+  test("hides the wide rail below the wide-terminal breakpoint", async () => {
+    await createApp({ width: 100, height: 24 })
+    fixture.setup.mockInput.pressKey("g")
+    fixture.setup.mockInput.pressKey("l")
+    await fixture.setup.renderOnce()
+    expect(fixture.setup.captureCharFrame()).not.toContain("NAVIGATION")
+
+    fixture.setup.resize(60, 22)
+    await fixture.setup.renderOnce()
+    expect(fixture.setup.captureCharFrame()).not.toContain("NAVIGATION")
+    expect(fixture.setup.captureCharFrame()).toContain("First Track — Artist One")
+  })
+
+  test("hides the wide rail when short terminals cannot fit its queue", async () => {
+    for (const height of [21, 22]) {
+      const shortFixture = createAppFixture()
+      await shortFixture.createApp({ width: 120, height })
+      shortFixture.setup.mockInput.pressKey("g")
+      shortFixture.setup.mockInput.pressKey("l")
+      await shortFixture.setup.renderOnce()
+      const frame = shortFixture.setup.captureCharFrame()
+
+      expect(frame).not.toContain("NAVIGATION")
+      expect(frame).not.toContain("QUEUE")
+      expect(frame).toContain("First Track")
+      expect(frame).toContain("nothing playing")
+      expect(frame).toContain("NORMAL")
+      expect(frame).not.toContain("SPECTRUM")
+      shortFixture.destroy()
+    }
   })
 
   test("keeps palette selection visible in a short terminal", async () => {

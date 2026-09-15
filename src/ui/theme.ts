@@ -1,6 +1,4 @@
 import { readFileSync } from "node:fs"
-import { homedir } from "node:os"
-import { join } from "node:path"
 
 export interface NutkaTheme {
   background: string
@@ -19,21 +17,21 @@ export interface NutkaTheme {
   visualizerPeak: string
 }
 
-const fallbackTheme: NutkaTheme = {
-  background: "#0B0C0C",
-  surface: "#121414",
-  surfaceRaised: "#181B1A",
-  overlay: "#080909D9",
-  selection: "#30362D",
-  border: "#454A45",
-  text: "#D8D0C2",
-  muted: "#777A75",
-  accent: "#9AAA76",
-  amber: "#D09A5B",
-  visualizerLow: "#739A78",
-  visualizerMid: "#9AAA76",
-  visualizerHigh: "#D8D0C2",
-  visualizerPeak: "#D09A5B",
+export const approvedTheme: NutkaTheme = {
+  background: "#0E0D12",
+  surface: "#121117",
+  surfaceRaised: "#17151D",
+  overlay: "#0B0A0F",
+  selection: "#30242E",
+  border: "#3F3B47",
+  text: "#F0EBF2",
+  muted: "#928B9E",
+  accent: "#B29CFF",
+  amber: "#FF6D66",
+  visualizerLow: "#8D78CF",
+  visualizerMid: "#B29CFF",
+  visualizerHigh: "#FF6D66",
+  visualizerPeak: "#F0EBF2",
 }
 
 export function parseOmarchyTheme(source: string): NutkaTheme | null {
@@ -70,21 +68,14 @@ export function parseOmarchyTheme(source: string): NutkaTheme | null {
   }
 }
 
-function loadTheme(): NutkaTheme {
-  const stateHome =
-    process.env.XDG_STATE_HOME ?? join(homedir(), ".local", "state")
-  const themePath = process.env.NUTKA_THEME_PATH ?? join(
-    stateHome,
-    "omarchy",
-    "current",
-    "theme",
-    "colors.toml",
-  )
+export function loadTheme(environment: NodeJS.ProcessEnv = process.env): NutkaTheme {
+  const themePath = environment.NUTKA_THEME_PATH
+  if (!themePath) return approvedTheme
 
   try {
-    return parseOmarchyTheme(readFileSync(themePath, "utf8")) ?? fallbackTheme
+    return parseOmarchyTheme(readFileSync(themePath, "utf8")) ?? approvedTheme
   } catch {
-    return fallbackTheme
+    return approvedTheme
   }
 }
 

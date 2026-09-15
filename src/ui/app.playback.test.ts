@@ -67,10 +67,18 @@ describe("Nutka TUI: playback", () => {
       positionSeconds: 12,
     })
     expect(fixture.setup.captureCharFrame()).toContain("First Track")
-    expect(fixture.setup.captureCharFrame()).toContain("0:12  ━━━━━●")
+    expect(fixture.setup.captureCharFrame()).toContain("0:12")
     expect(fixture.setup.captureCharFrame()).toContain("3:00")
     expect(fixture.setup.captureCharFrame()).toContain("NEXT  Second Track")
-    expect(fixture.setup.captureCharFrame()).toContain("AUDIO  LOSSLESS")
+    expect(fixture.setup.captureCharFrame()).toContain("QUALITY LOSSLESS")
+    expect(fixture.setup.captureCharFrame()).toContain("NAVIGATION")
+    expect(fixture.setup.captureCharFrame()).toContain("› Search")
+    expect(fixture.setup.captureCharFrame()).toContain("QUEUE")
+    expect(fixture.setup.captureCharFrame()).toContain("NOW PLAYING")
+    expect(fixture.setup.captureCharFrame()).toContain("NEXT Second Track")
+    expect(fixture.setup.captureCharFrame()).toContain("Shuffle")
+    expect(fixture.setup.captureCharFrame()).toContain("Repeat")
+    expect(fixture.setup.captureCharFrame()).toContain("SPECTRUM")
 
     const stateBeforeAnalysis = fixture.app.getState()
     playback.confirmAnalysis({
@@ -115,8 +123,8 @@ describe("Nutka TUI: playback", () => {
       repeatMode: "all",
     })
     await fixture.setup.renderOnce()
-    expect(fixture.setup.captureCharFrame()).toContain("SHUFFLE ON")
-    expect(fixture.setup.captureCharFrame()).toContain("REPEAT ALL")
+    expect(fixture.setup.captureCharFrame()).toContain("S:ON")
+    expect(fixture.setup.captureCharFrame()).toContain("R:ALL")
 
     fixture.setup.mockInput.pressKey("s")
     fixture.setup.mockInput.pressKey("r")

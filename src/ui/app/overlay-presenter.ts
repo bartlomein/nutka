@@ -213,5 +213,6 @@ export function renderOverlays(
   view.providerStatus.content = renderer.terminalWidth < 64
     ? compactAppleAuthStatusLabel(appleAuthStatus)
     : appleAuthStatusLabel(appleAuthStatus)
+  view.providerStatus.fg = appleAuthStatus.state === "signedIn" ? theme.amber : theme.muted
 
 }

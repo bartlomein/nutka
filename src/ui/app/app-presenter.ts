@@ -17,6 +17,31 @@ import { renderWorkspace } from "./workspace-presenter"
 
 export type { AppRenderables, AppView, AppViewModel } from "./view-contracts"
 
+export interface ConsoleLayout {
+  showRails: boolean
+  navigationWidth: number
+  centerWidth: number
+  queueWidth: number
+}
+
+export function consoleLayout(width: number, height: number): ConsoleLayout {
+  const showRails = height >= 23 && width >= 120
+  if (!showRails) {
+    return {
+      showRails: false,
+      navigationWidth: 0,
+      centerWidth: width,
+      queueWidth: 0,
+    }
+  }
+
+  const columnSpace = Math.max(0, width - 6)
+  const navigationWidth = Math.max(18, Math.floor(columnSpace * 0.15))
+  const queueWidth = Math.max(24, Math.floor(columnSpace * 0.22))
+  const centerWidth = Math.max(40, columnSpace - navigationWidth - queueWidth - 2)
+  return { showRails, navigationWidth, centerWidth, queueWidth }
+}
+
 export function createAppPresenter(
   renderer: CliRenderer,
   view: AppRenderables,
@@ -123,17 +148,38 @@ export function createAppPresenter(
 
   function resize(): void {
     const width = renderer.terminalWidth
-    const compactHeight = renderer.terminalHeight < 21
+    const compactHeight = renderer.terminalHeight < 23
+    const ultraCompact = renderer.terminalHeight < 12
     const compactAuth = renderer.terminalHeight < 14
+    const layout = consoleLayout(width, renderer.terminalHeight)
     view.header.height = compactHeight ? 2 : 3
     view.header.paddingX = compactHeight ? 1 : 2
-    view.workspace.padding = compactHeight ? 0 : 1
-    view.workspaceHeader.height = compactHeight ? 1 : 2
-    view.player.applyResponsiveLayout(width, compactHeight)
+    view.workspace.padding = compactHeight || (layout.showRails && layout.centerWidth < 80) ? 0 : 1
+    view.workspaceHeader.height = compactHeight || (layout.showRails && layout.centerWidth < 80) ? 1 : 2
+    view.filterLine.height = layout.showRails && layout.centerWidth < 80 ? 1 : 2
     view.footer.height = compactHeight ? 2 : 3
     view.footer.paddingX = compactHeight ? 1 : 2
+    view.app.border = layout.showRails && !ultraCompact
     view.providerStatus.visible = width >= 40
     view.destinationHint.visible = width >= 100
+    view.shell.padding = layout.showRails ? 1 : 0
+    view.shell.columnGap = layout.showRails ? 1 : 0
+    view.footer.border = layout.showRails ? true : ["top"]
+    view.workspace.border = layout.showRails
+    view.navigationRail.visible = layout.showRails
+    view.navigationRail.width = layout.navigationWidth
+    view.navigationPanel.visible = layout.showRails
+    view.mainColumn.width = layout.showRails ? layout.centerWidth : "100%"
+    view.mainColumn.paddingX = layout.showRails ? 1 : 0
+    view.mainColumn.paddingY = 0
+    view.mainColumn.border = layout.showRails && !ultraCompact
+    view.mainColumn.rowGap = layout.showRails && layout.centerWidth >= 80 ? 1 : 0
+    view.player.root.border = layout.showRails && layout.centerWidth >= 80 ? true : ["top"]
+    view.queueRail.visible = layout.showRails
+    view.queueRail.width = layout.queueWidth
+    view.queuePanel.visible = layout.showRails
+    view.player.applyResponsiveLayout(layout.centerWidth || width, compactHeight)
+    view.workspaceHeader.visible = !ultraCompact
     view.palettePopup.width = width >= 80 ? 72 : "94%"
     view.contextPopup.width = width >= 80 ? 72 : "94%"
     view.visualizerSettingsPopup.width = width >= 72 ? 64 : "94%"
@@ -148,12 +194,21 @@ export function createAppPresenter(
     view.authInstructions[0]!.height = compactAuth ? 1 : 2
     view.authInstructions[2]!.height = compactAuth ? 1 : 2
 
+    const denseTrackRows = layout.showRails && layout.centerWidth < 80
     for (const row of [view.tableHeader, ...view.trackRows]) {
       if (width < 64) {
         row.title.flexGrow = 1
         row.title.width = "auto"
         row.artist.visible = false
         row.album.visible = false
+      } else if (denseTrackRows) {
+        row.title.flexGrow = 0
+        row.title.width = Math.max(1, layout.centerWidth - 15 - (row.year.visible ? 7 : 0))
+        row.artist.visible = false
+        row.artist.flexGrow = 0
+        row.artist.width = 0
+        row.album.visible = false
+        row.album.width = 0
       } else if (width < 100) {
         row.title.flexGrow = 0
         row.title.width = "44%"
