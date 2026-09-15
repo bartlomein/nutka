@@ -75,7 +75,7 @@ async function closeBrowserSession(
 }
 
 export async function openBrowser(url: string, signal?: AbortSignal): Promise<void> {
-  const command = ["/usr/bin/xdg-open", url]
+  const command = browserOpenCommand(url)
   const processHandle = Bun.spawn(command, {
     stdout: "ignore",
     stderr: "ignore",
@@ -104,6 +104,15 @@ export async function openBrowser(url: string, signal?: AbortSignal): Promise<vo
   } finally {
     signal?.removeEventListener("abort", resolveAbort)
   }
+}
+
+export function browserOpenCommand(
+  url: string,
+  platform: NodeJS.Platform = process.platform,
+): [string, string] {
+  return platform === "darwin"
+    ? ["/usr/bin/open", url]
+    : ["/usr/bin/xdg-open", url]
 }
 
 function browserEnvironment(source: NodeJS.ProcessEnv): Record<string, string> {

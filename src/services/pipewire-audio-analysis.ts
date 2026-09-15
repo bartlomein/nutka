@@ -47,6 +47,12 @@ export interface PipeWireSpectrumSourceOptions {
   sleep?: (milliseconds: number) => Promise<void>
 }
 
+export function isPipeWireSupported(
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  return platform === "linux"
+}
+
 export class PcmSpectrumAnalyzer {
   private readonly samples = new Float64Array(fftSize)
   private readonly smoothedBands = new Float64Array(PLAYBACK_SPECTRUM_BAND_COUNT)
@@ -112,6 +118,7 @@ export class PipeWireSpectrumSource {
   constructor(private readonly options: PipeWireSpectrumSourceOptions) {}
 
   start(): void {
+    if (!isPipeWireSupported()) return
     if (this.active) return
     this.active = true
     const loop = this.run().catch(() => {})

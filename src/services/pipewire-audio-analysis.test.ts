@@ -1,11 +1,17 @@
 import { describe, expect, test } from "bun:test"
 
 import {
+  isPipeWireSupported,
   PcmSpectrumAnalyzer,
   PipeWireSpectrumSource,
   selectPipeWireAudioStream,
   type SpectrumSample,
 } from "./pipewire-audio-analysis"
+
+test("only enables PipeWire spectrum capture on Linux", () => {
+  expect(isPipeWireSupported("linux")).toBe(true)
+  expect(isPipeWireSupported("darwin")).toBe(false)
+})
 
 describe("PcmSpectrumAnalyzer", () => {
   test("places real sine energy into low, middle, and high frequency bands", () => {

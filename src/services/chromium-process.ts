@@ -129,8 +129,12 @@ export function applePlaybackProfilePath(
   return join(stateHome, "nutka", "chromium-profile")
 }
 
-export function defaultChromiumExecutablePath(): string {
-  return "/usr/bin/chromium"
+export function defaultChromiumExecutablePath(
+  platform: NodeJS.Platform = process.platform,
+): string {
+  return platform === "darwin"
+    ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+    : "/usr/bin/chromium"
 }
 
 export async function isDescendantProcess(
