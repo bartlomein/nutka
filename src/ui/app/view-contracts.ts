@@ -100,9 +100,10 @@ export interface AppRenderables {
   tableHeader: TrackRow
   trackRows: readonly TrackRow[]
   player: PlayerPanel
-  rail: BoxRenderable
+  navigationRail: BoxRenderable
   navigationPanel: BoxRenderable
   navigationRows: readonly NavigationRow[]
+  queueRail: BoxRenderable
   queuePanel: BoxRenderable
   queueNowPlaying: TextRenderable
   queueSummary: TextRenderable

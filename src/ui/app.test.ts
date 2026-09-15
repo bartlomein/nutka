@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test"
 
+import { consoleLayout } from "./app/app-presenter"
 import { createAppFixture } from "./test-support/app-fixture"
 
 const fixture = createAppFixture()
@@ -7,6 +8,19 @@ const { createApp } = fixture
 afterEach(fixture.destroy)
 
 describe("Nutka TUI: navigation and layout", () => {
+  test("keeps navigation and queue as independent rails around the dominant center", () => {
+    const wide = consoleLayout(150, 32)
+    expect(wide.showRails).toBe(true)
+    expect(wide.navigationWidth).toBeGreaterThan(0)
+    expect(wide.queueWidth).toBeGreaterThan(0)
+    expect(wide.centerWidth).toBeGreaterThan(wide.navigationWidth)
+    expect(wide.centerWidth).toBeGreaterThan(wide.queueWidth)
+    expect(wide.navigationWidth + wide.centerWidth + wide.queueWidth + 2).toBe(144)
+
+    expect(consoleLayout(119, 32).showRails).toBe(false)
+    expect(consoleLayout(150, 22).showRails).toBe(false)
+  })
+
   test("starts with an honest empty Apple Music workspace", async () => {
     await createApp({ tracks: [] })
     await fixture.setup.renderOnce()
@@ -18,6 +32,8 @@ describe("Nutka TUI: navigation and layout", () => {
     expect(frame).toContain("QUEUE")
     expect(frame).toContain("queue is empty")
     expect(frame).not.toContain("First Track")
+    expect(frame).not.toContain("▌")
+    expect(frame).not.toContain("┃")
 
     fixture.setup.mockInput.pressKey("g")
     fixture.setup.mockInput.pressKey("s")

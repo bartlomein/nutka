@@ -121,8 +121,8 @@ describe("Nutka TUI: playback", () => {
       repeatMode: "all",
     })
     await fixture.setup.renderOnce()
-    expect(fixture.setup.captureCharFrame()).toContain("SHUFFLE ON")
-    expect(fixture.setup.captureCharFrame()).toContain("REPEAT ALL")
+    expect(fixture.setup.captureCharFrame()).toContain("S:ON")
+    expect(fixture.setup.captureCharFrame()).toContain("R:ALL")
 
     fixture.setup.mockInput.pressKey("s")
     fixture.setup.mockInput.pressKey("r")

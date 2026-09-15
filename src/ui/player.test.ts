@@ -23,7 +23,7 @@ const nextTrack: Track = {
 
 describe("PlayerPanel", () => {
   test("centers playback hierarchy and keeps next and quality at the edges", async () => {
-    const setup = await createTestRenderer({ width: 100, height: 8 })
+    const setup = await createTestRenderer({ width: 100, height: 12 })
     const player = createPlayerPanel(setup.renderer)
     setup.renderer.root.add(player.root)
     player.applyResponsiveLayout(100, false)
@@ -112,7 +112,7 @@ describe("PlayerPanel", () => {
   })
 
   test("collapses and clears stale analysis when the visualizer is disabled", async () => {
-    const setup = await createTestRenderer({ width: 80, height: 8 })
+    const setup = await createTestRenderer({ width: 80, height: 12 })
     const player = createPlayerPanel(setup.renderer)
     setup.renderer.root.add(player.root)
     player.render({
@@ -137,7 +137,7 @@ describe("PlayerPanel", () => {
       peak: 240,
     })
     await setup.renderOnce()
-    expect(player.root.height).toBe(8)
+    expect(player.root.height).toBe(10)
     expect(setup.captureCharFrame().match(/[▁▂▃▄▅▆▇█]/gu)?.length).toBeGreaterThanOrEqual(8)
 
     player.setVisualizerEnabled(false)
@@ -153,7 +153,7 @@ describe("PlayerPanel", () => {
 
     player.setVisualizerEnabled(true)
     await setup.renderOnce()
-    expect(player.root.height).toBe(8)
+    expect(player.root.height).toBe(10)
     expect(setup.captureCharFrame()).not.toMatch(/[▁▂▃▄▅▆▇█]/)
 
     player.applyResponsiveLayout(80, true)
@@ -164,7 +164,7 @@ describe("PlayerPanel", () => {
 
   test("seeks proportionally when the progress rail is clicked or dragged", async () => {
     const seeks: number[] = []
-    const setup = await createTestRenderer({ width: 100, height: 8 })
+    const setup = await createTestRenderer({ width: 100, height: 12 })
     const player = createPlayerPanel(setup.renderer, {
       onSeek: (positionSeconds) => seeks.push(positionSeconds),
     })
@@ -204,7 +204,7 @@ describe("PlayerPanel", () => {
   })
 
   test("renders a sanitized unavailable state without invented metadata", async () => {
-    const setup = await createTestRenderer({ width: 80, height: 8 })
+    const setup = await createTestRenderer({ width: 80, height: 12 })
     const player = createPlayerPanel(setup.renderer)
     setup.renderer.root.add(player.root)
     player.applyResponsiveLayout(80, false)
@@ -236,7 +236,7 @@ describe("PlayerPanel", () => {
   })
 
   test("renders confirmed playback modes around compact transport icons", async () => {
-    const setup = await createTestRenderer({ width: 100, height: 8 })
+    const setup = await createTestRenderer({ width: 100, height: 12 })
     const player = createPlayerPanel(setup.renderer)
     setup.renderer.root.add(player.root)
     player.render({
@@ -267,7 +267,7 @@ describe("PlayerPanel", () => {
   })
 
   test("describes repeat behavior at the end of the queue", async () => {
-    const setup = await createTestRenderer({ width: 80, height: 8 })
+    const setup = await createTestRenderer({ width: 80, height: 12 })
     const player = createPlayerPanel(setup.renderer)
     setup.renderer.root.add(player.root)
     const state = {
@@ -301,7 +301,7 @@ describe("PlayerPanel", () => {
   })
 
   test("shows live station context and never calls an empty dynamic queue finished", async () => {
-    const setup = await createTestRenderer({ width: 100, height: 8 })
+    const setup = await createTestRenderer({ width: 100, height: 12 })
     const player = createPlayerPanel(setup.renderer)
     setup.renderer.root.add(player.root)
     player.render({

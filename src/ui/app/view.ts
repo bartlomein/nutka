@@ -38,6 +38,8 @@ export function createAppView(
     width: "100%",
     height: "100%",
     flexDirection: "column",
+    border: true,
+    borderColor: theme.border,
     backgroundColor: theme.background,
   })
 
@@ -69,6 +71,9 @@ export function createAppView(
     flexGrow: 1,
     padding: 1,
     flexDirection: "column",
+    border: true,
+    borderColor: theme.border,
+    backgroundColor: theme.surface,
     overflow: "hidden",
   })
   const workspaceHeader = new BoxRenderable(renderer, {
@@ -110,33 +115,35 @@ export function createAppView(
   })
   const mainColumn = new BoxRenderable(renderer, {
     id: "main-column",
-    width: "auto",
-    flexGrow: 1,
+    width: 80,
+    height: "100%",
     flexDirection: "column",
+    rowGap: 1,
+    padding: 1,
+    border: true,
+    borderColor: theme.border,
+    backgroundColor: theme.surface,
     overflow: "hidden",
   })
   mainColumn.add(workspace)
   mainColumn.add(player.root)
 
-  const rail = new BoxRenderable(renderer, {
-    id: "right-rail",
-    width: 30,
+  const navigationRail = new BoxRenderable(renderer, {
+    id: "navigation-rail",
+    width: 22,
     height: "100%",
-    paddingX: 1,
     flexDirection: "column",
-    border: ["left"],
+    border: true,
     borderColor: theme.border,
     backgroundColor: theme.surface,
   })
   const navigationPanel = new BoxRenderable(renderer, {
     id: "navigation-panel",
     width: "100%",
-    height: 10,
+    height: "100%",
     paddingX: 1,
     flexDirection: "column",
-    border: true,
-    borderColor: theme.border,
-    backgroundColor: theme.background,
+    backgroundColor: theme.surface,
   })
   navigationPanel.add(text(renderer, "navigation-title", "DESTINATIONS", theme.accent))
   const navigationRows = [
@@ -153,18 +160,24 @@ export function createAppView(
     navigationPanel.add(row.box)
     return row
   })
-  rail.add(navigationPanel)
+  navigationRail.add(navigationPanel)
 
-  const queuePanel = new BoxRenderable(renderer, {
-    id: "queue-panel",
-    width: "100%",
-    flexGrow: 1,
-    marginTop: 1,
-    paddingX: 1,
+  const queueRail = new BoxRenderable(renderer, {
+    id: "queue-rail",
+    width: 30,
+    height: "100%",
     flexDirection: "column",
     border: true,
     borderColor: theme.border,
-    backgroundColor: theme.background,
+    backgroundColor: theme.surface,
+  })
+  const queuePanel = new BoxRenderable(renderer, {
+    id: "queue-panel",
+    width: "100%",
+    height: "100%",
+    paddingX: 1,
+    flexDirection: "column",
+    backgroundColor: theme.surface,
   })
   queuePanel.add(text(renderer, "queue-title", "QUEUE", theme.accent))
   const queueNowPlaying = text(renderer, "queue-now-playing", "", theme.text)
@@ -178,17 +191,20 @@ export function createAppView(
     queuePanel.add(row.box)
     return row
   })
-  rail.add(queuePanel)
+  queueRail.add(queuePanel)
 
   const shell = new BoxRenderable(renderer, {
     id: "content-shell",
     width: "100%",
     flexGrow: 1,
     flexDirection: "row",
+    columnGap: 1,
+    padding: 1,
     overflow: "hidden",
   })
+  shell.add(navigationRail)
   shell.add(mainColumn)
-  shell.add(rail)
+  shell.add(queueRail)
 
   const footer = new BoxRenderable(renderer, {
     id: "footer",
@@ -198,11 +214,11 @@ export function createAppView(
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    border: ["top"],
+    border: true,
     borderColor: theme.border,
     backgroundColor: theme.surfaceRaised,
   })
-  const mode = text(renderer, "mode", "NORMAL", theme.background, theme.accent)
+  const mode = text(renderer, "mode", "NORMAL", theme.background, theme.amber)
   mode.width = 9
   const keyHelp = text(
     renderer,
@@ -496,9 +512,10 @@ export function createAppView(
     tableHeader,
     trackRows,
     player,
-    rail,
+    navigationRail,
     navigationPanel,
     navigationRows,
+    queueRail,
     queuePanel,
     queueNowPlaying,
     queueSummary,

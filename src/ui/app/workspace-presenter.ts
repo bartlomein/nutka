@@ -246,7 +246,11 @@ export function renderWorkspace(
   )
   const showYearColumn = activeBrowsePage?.kind === "artist"
   view.tableHeader.year.visible = showYearColumn
-  view.tableHeader.box.visible = !(compactHeight && showFilter)
+  const denseTerminal = renderer.terminalWidth >= 120 &&
+    renderer.terminalWidth < 132 &&
+    renderer.terminalHeight >= 23
+  view.tableHeader.box.visible = !denseTerminal &&
+    !(compactHeight && (showFilter || renderer.terminalHeight < 12))
 
   const activeRowCount = Math.max(
     1,
@@ -274,7 +278,12 @@ export function renderWorkspace(
       return
     }
 
-    restoreTrackRowLayout(row, renderer.terminalWidth, showYearColumn)
+    restoreTrackRowLayout(
+      row,
+      renderer.terminalWidth,
+      renderer.terminalHeight,
+      showYearColumn,
+    )
 
     const itemIndex = rowStart + rowIndex
     const artistRow = activeBrowsePage?.kind === "artist"
@@ -306,13 +315,14 @@ export function renderWorkspace(
       const selected = station.id === selectedId
       const favorite = model.favoriteStationIds.has(appleStationResourceId(station) ?? "")
       const unavailableCopy = "unavailable in MusicKit"
+      const denseStation = renderer.terminalWidth < 132
       row.box.visible = true
       setTrackRowContent(row, {
         title: `${selected ? "›" : " "} ${favorite ? "★ " : ""}${station.title}${
-          unavailable && renderer.terminalWidth < 100 ? ` — ${unavailableCopy}` : ""
+          unavailable && denseStation ? ` — ${unavailableCopy}` : ""
         }`,
         artist: unavailable
-          ? renderer.terminalWidth < 100 ? "" : unavailableCopy
+          ? denseStation ? "" : unavailableCopy
           : station.subtitle ?? (station.isLive ? "live" : "station"),
         album: unavailable ? unavailableCopy : station.description ?? "",
         time: "",
@@ -455,11 +465,16 @@ export function renderWorkspace(
     const libraryItem = model.library?.page.items.find((item) => item.id === track.id)
     const unavailable = libraryItem?.kind === "song" && !libraryItem.playback
     const title = `${track.title}${unavailable ? " [unavailable]" : ""}`
+    const denseTitle = denseTerminal
+      ? `${selected ? "›" : " "} ${title}${track.artist ? ` — ${track.artist}` : ""}${
+        track.album ? ` · ${track.album}` : ""
+      }`
+      : `${selected ? "›" : " "} ${title}`
     row.box.visible = true
     setTrackRowContent(row, {
       title: renderer.terminalWidth < 64
         ? `${selected ? "›" : " "} ${title}${track.artist ? ` — ${track.artist}` : ""}`
-        : `${selected ? "›" : " "} ${title}`,
+        : denseTitle,
       artist: track.artist,
       album: libraryItem && libraryItem.kind !== "song" ? "enter to open" : track.album,
       time: libraryItem && libraryItem.kind !== "song" ? "" : formatDuration(track.durationSeconds),
@@ -537,19 +552,31 @@ function isExternalLiveStation(station: Station): boolean {
 
 function restoreTrackRowLayout(
   row: AppRenderables["trackRows"][number],
-  width: number,
+  terminalWidth: number,
+  terminalHeight: number,
   showYearColumn: boolean,
 ): void {
   row.year.visible = showYearColumn
   row.time.visible = true
-  if (width < 64) {
+  if (terminalWidth < 64) {
     row.title.flexGrow = 1
     row.title.width = "auto"
     row.artist.visible = false
     row.album.visible = false
     return
   }
-  if (width < 100) {
+  if (terminalWidth >= 120 && terminalWidth < 132 && terminalHeight >= 23) {
+    row.title.flexGrow = 0
+    row.title.width = Math.max(1, terminalWidth - 66 - (showYearColumn ? 7 : 0))
+    row.artist.visible = false
+    row.artist.flexGrow = 0
+    row.artist.width = 0
+    row.album.visible = showYearColumn
+    row.album.flexGrow = 0
+    row.album.width = showYearColumn ? 8 : 0
+    return
+  }
+  if (terminalWidth < 100) {
     row.title.flexGrow = 0
     row.title.width = "44%"
     row.artist.visible = true

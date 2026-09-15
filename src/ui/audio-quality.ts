@@ -19,23 +19,25 @@ export function createAudioQualityBadge(renderer: CliRenderer): AudioQualityBadg
     content: "",
     width: 30,
     height: 1,
-    fg: theme.accent,
+    fg: theme.amber,
     truncate: true,
     visible: false,
   })
 
   function update(): void {
     const visible = Boolean(currentQuality) && !compactHeight && terminalWidth >= 64
-    const displayWidth = terminalWidth >= 100 ? 30 : 20
+    const displayWidth = terminalWidth >= 120 ? 30 : terminalWidth < 80 ? 16 : 20
     root.width = displayWidth
     root.visible = visible
     if (!currentQuality) {
       root.content = ""
       return
     }
-    root.fg = isPremiumQuality(currentQuality) ? theme.accent : theme.muted
+    root.fg = isPremiumQuality(currentQuality) ? theme.amber : theme.muted
     const label = formatAudioQuality(currentQuality, displayWidth < 30)
-    root.content = ` ${label} `.padStart(displayWidth)
+    root.content = displayWidth < 30
+      ? label.padStart(displayWidth)
+      : ` ${label} `.padStart(displayWidth)
   }
 
   function render(quality: AudioQuality | null): void {

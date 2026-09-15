@@ -78,7 +78,7 @@ export function createOverlay(
     zIndex,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: theme.overlay,
+    backgroundColor: theme.overlay.length === 7 ? `${theme.overlay}D9` : theme.overlay,
     visible: false,
   })
 }

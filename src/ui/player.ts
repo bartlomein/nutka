@@ -77,7 +77,7 @@ export function createPlayerPanel(
     height: 8,
     paddingX: 2,
     flexDirection: "column",
-    border: ["top"],
+    border: true,
     borderColor: theme.border,
     backgroundColor: theme.background,
   })
@@ -138,6 +138,8 @@ export function createPlayerPanel(
   repeatControl.width = 12
   const quality = createAudioQualityBadge(renderer)
   next.flexGrow = 1
+  next.flexShrink = 1
+  next.minWidth = 0
   controls.add(shuffleControl)
   controls.add(previousControl)
   controls.add(playPauseControl)
@@ -169,21 +171,21 @@ export function createPlayerPanel(
     const statusColor = state.errorMessage
       ? theme.amber
       : state.status === "playing"
-        ? theme.accent
+        ? theme.amber
         : state.status === "paused"
-          ? theme.amber
+          ? theme.accent
           : theme.muted
 
     root.borderColor = theme.border
     status.fg = statusColor
     progress.fg = statusColor
     title.fg = track ? theme.text : state.errorMessage ? theme.amber : theme.muted
-    previousControl.fg = track && state.canSkipPrevious !== false ? theme.accent : theme.muted
-    playPauseControl.fg = track ? theme.accent : theme.muted
+    previousControl.fg = track && state.canSkipPrevious !== false ? theme.amber : theme.muted
+    playPauseControl.fg = track ? theme.amber : theme.muted
     nextControl.fg = state.canSkipNext !== false && (
         state.queue.length > 0 || state.repeatMode !== "none" || state.dynamicQueue
       )
-      ? theme.accent
+      ? theme.amber
       : theme.muted
 
     status.content = state.errorMessage
@@ -240,7 +242,7 @@ export function createPlayerPanel(
   }
 
   function renderModeControls(state: PlayerPanelState): void {
-    const wide = terminalWidth >= 94
+    const wide = terminalWidth >= 94 && contentWidth >= 90
     const shuffleActive = state.shuffleMode === "songs"
     const repeatActive = state.repeatMode !== "none"
     const showShuffle = state.canSetShuffleMode || shuffleActive
@@ -256,9 +258,9 @@ export function createPlayerPanel(
         : `R:${repeatModeLabel(state.repeatMode, false)}`
       : ""
     shuffleControl.fg = shuffleActive ? theme.background : theme.muted
-    shuffleControl.bg = shuffleActive ? theme.accent : theme.background
+    shuffleControl.bg = shuffleActive ? theme.amber : theme.background
     repeatControl.fg = repeatActive ? theme.background : theme.muted
-    repeatControl.bg = repeatActive ? theme.accent : theme.background
+    repeatControl.bg = repeatActive ? theme.amber : theme.background
 
     const shuffleWidth = showShuffle ? wide ? 12 : 5 : 0
     const repeatWidth = showRepeat ? wide ? 12 : 6 : 0
@@ -299,6 +301,7 @@ export function createPlayerPanel(
       settings,
       palette: resolveVisualizerPalette(settings.palette, theme),
     })
+    visualizer.root.height = responsiveVisualizerHeight(contentWidth, settings.height) + 1
     applyResponsiveLayout(terminalWidth, compactHeight)
     renderer.requestRender()
   }
@@ -316,17 +319,23 @@ export function createPlayerPanel(
     terminalWidth = renderer.terminalWidth
     contentWidth = width
     compactHeight = isCompactHeight
-    root.height = compactHeight ? 3 : visualizerEnabled ? 5 + visualizerSettings.height : 5
+    const spectrumHeight = responsiveVisualizerHeight(contentWidth, visualizerSettings.height)
+    root.height = compactHeight ? 3 : visualizerEnabled ? (contentWidth < 80 ? 5 : 7) + spectrumHeight : 5
     root.paddingX = compactHeight ? 1 : 2
     primary.justifyContent = "center"
     title.flexGrow = 0
     title.width = "auto"
-    metadata.visible = !compactHeight
+    metadata.visible = !compactHeight && contentWidth >= 80
     context.visible = !compactHeight
     status.width = 3
     if (latestState) renderModeControls(latestState)
     quality.applyResponsiveLayout(contentWidth, compactHeight)
     visualizer.applyResponsiveLayout(contentWidth, compactHeight || !visualizerEnabled)
+    visualizer.root.height = spectrumHeight + 1
+  }
+
+  function responsiveVisualizerHeight(width: number, height: number): number {
+    return width < 80 ? 0 : height
   }
 
   applyResponsiveLayout(terminalWidth, compactHeight)
