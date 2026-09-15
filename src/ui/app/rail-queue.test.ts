@@ -116,8 +116,8 @@ describe("Nutka TUI: v3 rail and queue fidelity", () => {
     await fixture.setup.renderOnce()
 
     const frame = fixture.setup.captureCharFrame()
-    expect(frame).toContain("01")
     expect(frame).toContain("NEXT Untitled")
+    expect(frame).not.toContain("01")
     expect(frame).not.toContain("undefined")
     expect(frame).not.toContain("SOURCE  ")
 

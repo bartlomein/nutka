@@ -583,7 +583,6 @@ function renderRightRail(
     }
     const selected = track.id === selectedQueueTrackId
     row.box.visible = true
-    row.number.content = String(index + 1).padStart(2, "0")
     row.title.content = `${selected ? "› " : ""}${index === 0 ? "NEXT " : ""}${track.title}`
     const queueMetadata = [track.artist, track.album].filter(Boolean).join("  ·  ")
     const queueDuration = availableDuration(track.durationSeconds)
@@ -592,7 +591,6 @@ function renderRightRail(
     row.duration.content = queueDuration
     row.duration.visible = queueDuration.length > 0
     row.box.backgroundColor = selected ? theme.selection : theme.background
-    row.number.fg = selected ? theme.text : theme.muted
     row.title.fg = selected ? theme.text : theme.muted
     row.detail.fg = selected ? theme.text : theme.muted
     row.duration.fg = selected ? theme.text : theme.muted

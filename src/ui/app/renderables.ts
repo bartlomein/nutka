@@ -42,7 +42,6 @@ export interface NavigationRow {
 
 export interface QueueRow {
   box: BoxRenderable
-  number: TextRenderable
   title: TextRenderable
   detail: TextRenderable
   duration: TextRenderable
@@ -148,10 +147,8 @@ export function createQueueRow(
     width: "100%",
     height: 2,
     flexDirection: "row",
-    columnGap: 1,
     backgroundColor: theme.background,
   })
-  const number = text(renderer, `${id}-number`, "", theme.muted)
   const title = text(renderer, `${id}-title`, "", theme.text)
   const detail = text(renderer, `${id}-detail`, "", theme.muted)
   const duration = text(renderer, `${id}-duration`, "", theme.muted)
@@ -168,7 +165,7 @@ export function createQueueRow(
     flexDirection: "row",
     columnGap: 1,
   })
-  number.width = 3
+  body.flexGrow = 1
   title.flexGrow = 1
   duration.width = 6
   detail.width = "100%"
@@ -176,9 +173,8 @@ export function createQueueRow(
   titleLine.add(duration)
   body.add(titleLine)
   body.add(detail)
-  box.add(number)
   box.add(body)
-  return { box, number, title, detail, duration }
+  return { box, title, detail, duration }
 }
 
 export function setTrackRowContent(row: TrackRow, content: TrackRowContent): void {
