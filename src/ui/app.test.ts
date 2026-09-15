@@ -103,6 +103,25 @@ describe("Nutka TUI: navigation and layout", () => {
     expect(fixture.setup.captureCharFrame()).toContain("First Track — Artist One")
   })
 
+  test("hides the wide rail when short terminals cannot fit its queue", async () => {
+    for (const height of [21, 22]) {
+      const shortFixture = createAppFixture()
+      await shortFixture.createApp({ width: 120, height })
+      shortFixture.setup.mockInput.pressKey("g")
+      shortFixture.setup.mockInput.pressKey("l")
+      await shortFixture.setup.renderOnce()
+      const frame = shortFixture.setup.captureCharFrame()
+
+      expect(frame).not.toContain("DESTINATIONS")
+      expect(frame).not.toContain("QUEUE")
+      expect(frame).toContain("First Track")
+      expect(frame).toContain("nothing playing")
+      expect(frame).toContain("NORMAL")
+      expect(frame).not.toContain("SPECTRUM")
+      shortFixture.destroy()
+    }
+  })
+
   test("keeps palette selection visible in a short terminal", async () => {
     let quitCount = 0
     await createApp({ width: 60, height: 12 }, () => quitCount++)

@@ -123,7 +123,7 @@ export function createAppPresenter(
 
   function resize(): void {
     const width = renderer.terminalWidth
-    const compactHeight = renderer.terminalHeight < 21
+    const compactHeight = renderer.terminalHeight < 23
     const compactAuth = renderer.terminalHeight < 14
     const showRail = !compactHeight && width >= 120
     const showQueueRail = showRail && width >= 120

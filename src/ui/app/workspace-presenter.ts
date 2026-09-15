@@ -102,7 +102,7 @@ export function renderWorkspace(
     state.destination === "radio" ||
     state.mode.type === "search" ||
     Boolean(activeFilter)
-  const compactHeight = renderer.terminalHeight < 21
+  const compactHeight = renderer.terminalHeight < 23
   const activeVisualizerSettings = visualizerSettingsDialog?.draft ?? model.visualizerSettings
   const normalReservedRows = (showFilter ? 18 : 16) + (
     model.visualizerEnabled ? activeVisualizerSettings.height : 0
