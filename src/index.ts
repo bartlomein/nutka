@@ -3,6 +3,7 @@
 import { createCliRenderer } from "@opentui/core"
 
 import { AppleAuthManager } from "./services/apple-auth"
+import { restoreAppleAuthOnStartup } from "./services/apple-auth/startup"
 import { AppleAuthorizationBrowserLauncher } from "./services/apple-authorization-browser"
 import { AppleCatalogProvider } from "./services/apple-catalog"
 import {
@@ -215,7 +216,7 @@ if (authManager) {
     if (status.state === "signedIn") playbackController?.enableAuthorization()
     app.setAppleAuthStatus(status)
   })
-  void authManager.restore().catch(() => {})
+  void restoreAppleAuthOnStartup(authManager).catch(() => {})
 } else {
   app.setAppleAuthStatus({
     state: "error",

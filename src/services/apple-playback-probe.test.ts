@@ -4,11 +4,17 @@ import type { AppleCatalogTrack } from "../core/types"
 import {
   ApplePlaybackProbeError,
   readBoundedProcessOutput,
+  requiresAudioSinkProof,
   runApplePlaybackProbe,
   type PlaybackProbeBrowser,
   type PlaybackProbeControl,
   type PlaybackProbeSnapshot,
 } from "./apple-playback-probe"
+
+test("requires PipeWire audio proof only on Linux", () => {
+  expect(requiresAudioSinkProof("linux")).toBe(true)
+  expect(requiresAudioSinkProof("darwin")).toBe(false)
+})
 
 test("bounds and times out subprocess output", async () => {
   let oversizedKills = 0

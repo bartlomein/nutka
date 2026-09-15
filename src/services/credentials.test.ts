@@ -171,13 +171,99 @@ describe("Linux credential store", () => {
   })
 })
 
+describe("macOS credential store", () => {
+  test("loads and decodes base64url with fixed service and account", async () => {
+    const runner = new FakeRunner(() => result(0, "dXNlci10b2tlbg\n"))
+    const store = createCredentialStore({ platform: "darwin", runner })
+
+    expect(await store.load()).toBe("user-token")
+    expect(runner.requests[0]?.args).toEqual([
+      "find-generic-password",
+      "-s",
+      "dev.nutka.cli",
+      "-a",
+      "apple-music-user-token.v1",
+      "-w",
+    ])
+    expect(runner.requests[0]?.executable).toBe("/usr/bin/security")
+  })
+
+  test("migrates a legacy Nuta keychain item through encoded stdin", async () => {
+    const runner = new FakeRunner((request) => {
+      if (request.args[0] === "find-generic-password") {
+        return request.args.includes("dev.nutka.cli")
+          ? result(44)
+          : result(0, "bGVnYWN5LXRva2Vu\n")
+      }
+      return result()
+    })
+    const store = createCredentialStore({ platform: "darwin", runner })
+
+    expect(await store.load()).toBe("legacy-token")
+    expect(runner.requests[0]?.args).toContain("dev.nutka.cli")
+    expect(runner.requests[1]?.args).toContain("dev.nuta.cli")
+    expect(runner.requests[2]?.args).toEqual(["-q", "-i"])
+    expect(stdin(runner.requests[2]!)).toContain(
+      "-s dev.nutka.cli -a apple-music-user-token.v1 -w bGVnYWN5LXRva2Vu",
+    )
+    expect(runner.requests[3]?.args).toContain("dev.nuta.cli")
+    expect(runner.requests.flatMap(({ args }) => args)).not.toContain("legacy-token")
+  })
+
+  test("saves through quiet interactive stdin with no secret in argv", async () => {
+    const token = "sensitive token"
+    const runner = new FakeRunner(() => result())
+    const store = createCredentialStore({ platform: "darwin", runner })
+
+    await store.save(token)
+
+    expect(runner.requests[0]?.args).toEqual(["-q", "-i"])
+    expect(runner.requests[0]?.args.join(" ")).not.toContain(token)
+    expect(stdin(runner.requests[0]!)).toBe(
+      "add-generic-password -U -s dev.nutka.cli -a apple-music-user-token.v1 -w c2Vuc2l0aXZlIHRva2Vu\n",
+    )
+    expect(stdin(runner.requests[0]!)).not.toContain(token)
+  })
+
+  test("returns null for security's item-not-found status", async () => {
+    const store = createCredentialStore({
+      platform: "darwin",
+      runner: new FakeRunner(() => result(44)),
+    })
+    expect(await store.load()).toBeNull()
+  })
+
+  test("deletes fixed item and treats item-not-found as success", async () => {
+    const runner = new FakeRunner(() => result(44))
+    const store = createCredentialStore({ platform: "darwin", runner })
+    await expect(store.delete()).resolves.toBeUndefined()
+    expect(runner.requests[0]?.args).toEqual([
+      "delete-generic-password",
+      "-s",
+      "dev.nutka.cli",
+      "-a",
+      "apple-music-user-token.v1",
+    ])
+  })
+
+  test("rejects padded, malformed, and non-canonical base64url", async () => {
+    for (const value of ["dG9rZW4=\n", "not valid\n", "AB\n"]) {
+      const store = createCredentialStore({
+        platform: "darwin",
+        runner: new FakeRunner(() => result(0, value)),
+      })
+      await expect(store.load()).rejects.toMatchObject({ code: "invalid_data" })
+    }
+  })
+})
+
 describe("credential store failures", () => {
   test("rejects unsupported platforms with a typed sanitized error", () => {
     expect(() =>
-      createCredentialStore({ platform: "darwin" }),
+      createCredentialStore({ platform: "win32" }),
     ).toThrow(CredentialStoreError)
     try {
-      createCredentialStore({ platform: "darwin" })
+      createCredentialStore({ platform: "win32" })
     } catch (error) {
       expect(error).toMatchObject({ code: "unsupported_platform" })
     }
@@ -272,10 +358,16 @@ describe("credential store failures", () => {
       PATH: "/untrusted/bin",
     }
     const linuxRunner = new FakeRunner(() => result(1))
+    const macRunner = new FakeRunner(() => result(44))
 
     await createCredentialStore({
       platform: "linux",
       runner: linuxRunner,
+      environment: source,
+    }).load()
+    await createCredentialStore({
+      platform: "darwin",
+      runner: macRunner,
       environment: source,
     }).load()
 
@@ -285,6 +377,11 @@ describe("credential store failures", () => {
       DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1/bus",
       DISPLAY: ":0",
       WAYLAND_DISPLAY: "wayland-1",
+    })
+    expect(macRunner.requests[0]?.env).toEqual({
+      HOME: "/home/test",
+      USER: "tester",
+      LOGNAME: "tester",
     })
   })
 

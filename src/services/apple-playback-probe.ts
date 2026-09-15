@@ -26,6 +26,12 @@ export {
 const PLAYBACK_START_TIMEOUT_MS = 30_000
 const CONTROL_TIMEOUT_MS = 10_000
 
+export function requiresAudioSinkProof(
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  return platform === "linux"
+}
+
 export type ApplePlaybackProbeErrorCode =
   | "invalid_track"
   | "token_service_unavailable"
@@ -153,6 +159,7 @@ export async function runApplePlaybackProbe(
     let snapshot = started
     options.onProgress?.(snapshot)
     let audioSinkDetected = false
+    const audioSinkProofRequired = requiresAudioSinkProof()
     let notPlayingSince: number | undefined
     const proofDeadline = now() + (proofDurationSeconds + 15) * 1_000
 
@@ -178,15 +185,21 @@ export async function runApplePlaybackProbe(
         continue
       }
       notPlayingSince = undefined
-      if (!audioSinkDetected && (snapshot.positionSeconds ?? 0) - startPosition >= 3) {
+      if (
+        audioSinkProofRequired &&
+        !audioSinkDetected &&
+        (snapshot.positionSeconds ?? 0) - startPosition >= 3
+      ) {
         audioSinkDetected = await detectAudioSink(browser.processId)
       }
     }
 
-    if (!audioSinkDetected) {
+    if (audioSinkProofRequired && !audioSinkDetected) {
       audioSinkDetected = await detectAudioSink(browser.processId)
     }
-    if (!audioSinkDetected) throw new ApplePlaybackProbeError("audio_output_missing")
+    if (audioSinkProofRequired && !audioSinkDetected) {
+      throw new ApplePlaybackProbeError("audio_output_missing")
+    }
 
     await browser.click("pause")
     const paused = await waitForSnapshot(
