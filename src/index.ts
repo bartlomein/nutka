@@ -5,7 +5,10 @@ import { createCliRenderer } from "@opentui/core"
 import { AppleAuthManager } from "./services/apple-auth"
 import { AppleAuthorizationBrowserLauncher } from "./services/apple-authorization-browser"
 import { AppleCatalogProvider } from "./services/apple-catalog"
-import { AppleDeveloperTokenProvider } from "./services/apple-developer-token-provider"
+import {
+  AppleDeveloperTokenProvider,
+  DEFAULT_APPLE_SIGNER_URL,
+} from "./services/apple-developer-token-provider"
 import {
   startAppleLoopbackServer,
   type AppleLoopbackServer,
@@ -27,7 +30,7 @@ const renderer = await createCliRenderer({
   backgroundColor: theme.background,
 })
 
-const signerUrl = process.env.NUTKA_APPLE_SIGNER_URL
+const signerUrl = process.env.NUTKA_APPLE_SIGNER_URL ?? DEFAULT_APPLE_SIGNER_URL
 let tokenProvider: AppleDeveloperTokenProvider | undefined
 let loopbackServer: AppleLoopbackServer | undefined
 let tokenServiceUrl: string | undefined

@@ -1,9 +1,21 @@
 # Apple Music setup
 
-Start with the [local development setup](../README.md#run-locally).
+Start with the [installation steps](../README.md#run-locally).
 Apple Music login and playback require a subscription, an installed Chromium
-browser, and a configured developer-token signer. On Linux, install
+browser, and access to `https://api.nutka.fm`, Nutka's default token signer.
+You do not need your own Apple Developer account or signing credentials.
+On Linux, install
 `secret-tool` and run an unlocked Secret Service keyring.
+
+Run `bun run start`, then use `Ctrl+P` > `Sign in to Apple Music`.
+Set `NUTKA_APPLE_SIGNER_URL` to override the hosted signer with your own HTTPS
+signer or a local development signer.
+
+## Local signer development
+
+This section is only needed when developing or hosting the signer yourself.
+Install its dependencies with
+`bun install --frozen-lockfile --cwd services/apple-token`.
 
 To run the local Cloudflare signer and Apple-enabled client together, run:
 
@@ -29,7 +41,9 @@ replaced on each `bun run dev:apple` launch. Set `NUTKA_APPLE_SIGNER_LOG` to a
 different path, or to `off` to discard signer output. Startup failures include
 the active log path so the signer can be diagnosed without corrupting the TUI.
 
-With real Apple credentials configured, open `Ctrl+P` and run `Sign in to Apple
+## Login and playback
+
+Open `Ctrl+P` and run `Sign in to Apple
 Music`. Nutka opens one visible Chromium window using its private playback
 profile. The localhost page connects through a one-time URL fragment, Apple
 handles account login, and Nutka validates the resulting session before storing
@@ -46,15 +60,15 @@ developer tokens, session capabilities, or Music User Tokens. Set
 
 After signing in, selecting a playable Apple Music song and pressing `Enter`
 starts normal playback in an invisible worker. The optional standalone proof
-exercises the same profile and MusicKit host. Run `bun run signer:dev` in another
-terminal first, and do not run Nutka at the same time because both use the fixed
-loopback port:
+exercises the same profile and MusicKit host. Sign in through Nutka first, then
+close Nutka before running the probe because both use the fixed loopback port.
+The probe uses the hosted signer by default:
 
 ```sh
 bun run playback:probe
 ```
 
-Authorization opens one visible browser window. Normal playback and the probe
+Nutka's authorization opens one visible browser window. Normal playback and the probe
 then use `/usr/bin/chromium`, download no browser, and open no window.
 The probe tests one real song for 36 seconds plus pause, resume, seek, and stop.
 Set `NUTKA_CHROMIUM_PATH` to select another installed Chrome-compatible browser.

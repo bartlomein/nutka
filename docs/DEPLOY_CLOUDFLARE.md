@@ -31,12 +31,12 @@ Cloudflare account:
 
 ```sh
 bunx wrangler login
+bun run check
+bun run deploy
 bunx wrangler secret put APPLE_TEAM_ID
 bunx wrangler secret put APPLE_KEY_ID
 bunx wrangler secret put APPLE_PRIVATE_KEY
 bunx wrangler secret put SIGNING_ENABLED
-bun run check
-bun run deploy
 ```
 
 Enter `true` for `SIGNING_ENABLED` only after the other bindings are present.
@@ -44,10 +44,11 @@ Paste the PKCS#8 `.p8` contents through Wrangler's interactive prompt. Do not pu
 the key in `wrangler.jsonc`, a shell argument, CI output, or GitHub secrets used
 by pull requests.
 
-The initial deployment uses the generated `workers.dev` hostname. Once the
-Cloudflare zone is active, attach a custom domain such as `api.nutka.fm`, disable
-the production `workers.dev` route, and set that HTTPS origin as Nutka's
-`NUTKA_APPLE_SIGNER_URL` release default.
+The Worker uses the custom domain `https://api.nutka.fm`, configured in
+`services/apple-token/wrangler.jsonc`. Cloudflare manages its DNS record and
+HTTPS certificate. The Worker's `workers.dev` route and preview URLs are
+disabled. The client and playback probe use `https://api.nutka.fm` by default;
+`NUTKA_APPLE_SIGNER_URL` overrides that address for development or self-hosting.
 
 ## Smoke test
 

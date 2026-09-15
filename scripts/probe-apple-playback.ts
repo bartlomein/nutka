@@ -1,6 +1,9 @@
 import { AppleCatalogProvider } from "../src/services/apple-catalog"
 import { AppleAuthManager } from "../src/services/apple-auth"
-import { AppleDeveloperTokenProvider } from "../src/services/apple-developer-token-provider"
+import {
+  AppleDeveloperTokenProvider,
+  DEFAULT_APPLE_SIGNER_URL,
+} from "../src/services/apple-developer-token-provider"
 import { startAppleLoopbackServer } from "../src/services/apple-loopback-server"
 import {
   ApplePlaybackProbeError,
@@ -12,7 +15,7 @@ import {
 } from "../src/services/chromium-process"
 import { createCredentialStore } from "../src/services/credentials"
 
-const signerUrl = process.env.NUTKA_APPLE_SIGNER_URL ?? "http://127.0.0.1:8788"
+const signerUrl = process.env.NUTKA_APPLE_SIGNER_URL ?? DEFAULT_APPLE_SIGNER_URL
 const executablePath =
   process.env.NUTKA_CHROMIUM_PATH ?? defaultChromiumExecutablePath()
 const query = process.argv.slice(2).join(" ").trim() || "Massive Attack Angel"

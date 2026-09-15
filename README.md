@@ -11,8 +11,7 @@ uses a hidden worker, with an optional PipeWire spectrum visualizer on Linux.
 
 - [Bun](https://bun.sh/) 1.3.0 or newer. Development and CI use Bun 1.4.0.
 - Linux. Other operating systems are not currently supported.
-- For Apple Music: a subscription, an installed Chromium-compatible browser,
-  and a configured [developer-token signer](services/apple-token/README.md).
+- For Apple Music: a subscription and an installed Chromium-compatible browser.
 - For saved login: `secret-tool` and an unlocked Secret Service keyring.
 
 The terminal shell and automated tests run without Apple credentials or Chromium.
@@ -21,16 +20,13 @@ The terminal shell and automated tests run without Apple credentials or Chromium
 
 ```sh
 bun install --frozen-lockfile
-bun install --frozen-lockfile --cwd services/apple-token
-bun run dev
+bun run start
 ```
 
-This opens an empty terminal interface. To connect Apple Music, follow
-[Apple Music setup](docs/APPLE_MUSIC.md), configure the local signer, then run:
-
-```sh
-bun run dev:apple
-```
+Nutka gets developer tokens automatically from `https://api.nutka.fm`. You do
+not need an Apple Developer account or a private signing key. Open `Ctrl+P` and
+choose `Sign in to Apple Music`. See [Apple Music setup](docs/APPLE_MUSIC.md)
+for browser configuration and local signer development.
 
 Use `Ctrl+P` to sign in and navigate, `j`/`k` or arrows to move, `Enter` to play,
 `Space` to pause, and `?` for help. See [all controls](docs/CONTROLS.md).
@@ -41,7 +37,10 @@ log paths, and browser configuration are documented in
 
 ## Development
 
+Install the signer dependencies before running all checks:
+
 ```sh
+bun install --frozen-lockfile --cwd services/apple-token
 bun run check
 ```
 

@@ -8,6 +8,8 @@ import {
   type Fetch,
 } from "./token-service"
 
+export const DEFAULT_APPLE_SIGNER_URL = "https://api.nutka.fm"
+
 const MIN_VALIDITY_MS = 60_000
 const MAX_TOKEN_LENGTH = 16 * 1024
 
