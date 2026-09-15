@@ -125,15 +125,24 @@ export function createAppPresenter(
     const width = renderer.terminalWidth
     const compactHeight = renderer.terminalHeight < 21
     const compactAuth = renderer.terminalHeight < 14
+    const showRail = !compactHeight && width >= 120
+    const showQueueRail = showRail && width >= 120
     view.header.height = compactHeight ? 2 : 3
     view.header.paddingX = compactHeight ? 1 : 2
     view.workspace.padding = compactHeight ? 0 : 1
     view.workspaceHeader.height = compactHeight ? 1 : 2
-    view.player.applyResponsiveLayout(width, compactHeight)
     view.footer.height = compactHeight ? 2 : 3
     view.footer.paddingX = compactHeight ? 1 : 2
     view.providerStatus.visible = width >= 40
     view.destinationHint.visible = width >= 100
+    view.rail.visible = showRail
+    view.rail.width = showQueueRail ? 32 : 24
+    view.navigationPanel.visible = showRail
+    view.queuePanel.visible = showQueueRail
+    const mainColumnWidth = showRail
+      ? Math.max(40, width - (showQueueRail ? 32 : 24) - 2)
+      : width
+    view.player.applyResponsiveLayout(mainColumnWidth, compactHeight)
     view.palettePopup.width = width >= 80 ? 72 : "94%"
     view.contextPopup.width = width >= 80 ? 72 : "94%"
     view.visualizerSettingsPopup.width = width >= 72 ? 64 : "94%"

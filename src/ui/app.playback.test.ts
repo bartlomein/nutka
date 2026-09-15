@@ -67,10 +67,16 @@ describe("Nutka TUI: playback", () => {
       positionSeconds: 12,
     })
     expect(fixture.setup.captureCharFrame()).toContain("First Track")
-    expect(fixture.setup.captureCharFrame()).toContain("0:12  ━━━━━●")
+    expect(fixture.setup.captureCharFrame()).toContain("0:12")
     expect(fixture.setup.captureCharFrame()).toContain("3:00")
     expect(fixture.setup.captureCharFrame()).toContain("NEXT  Second Track")
     expect(fixture.setup.captureCharFrame()).toContain("AUDIO  LOSSLESS")
+    expect(fixture.setup.captureCharFrame()).toContain("DESTINATIONS")
+    expect(fixture.setup.captureCharFrame()).toContain("› Search")
+    expect(fixture.setup.captureCharFrame()).toContain("QUEUE")
+    expect(fixture.setup.captureCharFrame()).toContain("NOW  First Track")
+    expect(fixture.setup.captureCharFrame()).toContain("› Second Track")
+    expect(fixture.setup.captureCharFrame()).toContain("SPECTRUM")
 
     const stateBeforeAnalysis = fixture.app.getState()
     playback.confirmAnalysis({

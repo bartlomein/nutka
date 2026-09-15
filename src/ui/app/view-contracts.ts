@@ -22,7 +22,7 @@ import type { Command } from "./commands"
 import type { InfoTarget } from "./copy"
 import type { PlaylistView } from "./playlist-controller"
 import type { LibraryPage } from "./library-controller"
-import type { PaletteRow, TrackRow } from "./renderables"
+import type { NavigationRow, PaletteRow, QueueRow, TrackRow } from "./renderables"
 
 interface LandingState {
   status: "idle" | "loading" | "loadingMore" | "ready" | "error"
@@ -90,6 +90,8 @@ export interface AppRenderables {
   header: BoxRenderable
   breadcrumb: TextRenderable
   providerStatus: TextRenderable
+  shell: BoxRenderable
+  mainColumn: BoxRenderable
   workspace: BoxRenderable
   workspaceHeader: BoxRenderable
   workspaceTitle: TextRenderable
@@ -98,6 +100,14 @@ export interface AppRenderables {
   tableHeader: TrackRow
   trackRows: readonly TrackRow[]
   player: PlayerPanel
+  rail: BoxRenderable
+  navigationPanel: BoxRenderable
+  navigationRows: readonly NavigationRow[]
+  queuePanel: BoxRenderable
+  queueNowPlaying: TextRenderable
+  queueSummary: TextRenderable
+  queueEmpty: TextRenderable
+  queueRows: readonly QueueRow[]
   footer: BoxRenderable
   mode: TextRenderable
   keyHelp: TextRenderable

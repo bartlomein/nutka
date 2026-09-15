@@ -12,8 +12,11 @@ import {
 import {
   createOverlay,
   createTrackRow,
+  createNavigationRow,
+  createQueueRow,
   maxContextRows,
   maxPaletteRows,
+  maxQueueRows,
   maxTrackRows,
   setTrackRowColor,
   setTrackRowContent,
@@ -105,6 +108,88 @@ export function createAppView(
     onSeek: options.onSeek,
     visualizer: options.visualizerSettings,
   })
+  const mainColumn = new BoxRenderable(renderer, {
+    id: "main-column",
+    width: "auto",
+    flexGrow: 1,
+    flexDirection: "column",
+    overflow: "hidden",
+  })
+  mainColumn.add(workspace)
+  mainColumn.add(player.root)
+
+  const rail = new BoxRenderable(renderer, {
+    id: "right-rail",
+    width: 30,
+    height: "100%",
+    paddingX: 1,
+    flexDirection: "column",
+    border: ["left"],
+    borderColor: theme.border,
+    backgroundColor: theme.surface,
+  })
+  const navigationPanel = new BoxRenderable(renderer, {
+    id: "navigation-panel",
+    width: "100%",
+    height: 10,
+    paddingX: 1,
+    flexDirection: "column",
+    border: true,
+    borderColor: theme.border,
+    backgroundColor: theme.background,
+  })
+  navigationPanel.add(text(renderer, "navigation-title", "DESTINATIONS", theme.accent))
+  const navigationRows = [
+    ["home", "Home", "g h"],
+    ["library", "Library", "g l"],
+    ["playlists", "Playlists", "g p"],
+    ["radio", "Radio", "g r"],
+    ["search", "Search", "g s"],
+    ["queue", "Queue", "g q"],
+  ].map(([destination, label, shortcut]) => {
+    const row = createNavigationRow(renderer, `navigation-${destination}`)
+    row.label.content = `  ${label}`
+    row.shortcut.content = shortcut
+    navigationPanel.add(row.box)
+    return row
+  })
+  rail.add(navigationPanel)
+
+  const queuePanel = new BoxRenderable(renderer, {
+    id: "queue-panel",
+    width: "100%",
+    flexGrow: 1,
+    marginTop: 1,
+    paddingX: 1,
+    flexDirection: "column",
+    border: true,
+    borderColor: theme.border,
+    backgroundColor: theme.background,
+  })
+  queuePanel.add(text(renderer, "queue-title", "QUEUE", theme.accent))
+  const queueNowPlaying = text(renderer, "queue-now-playing", "", theme.text)
+  const queueSummary = text(renderer, "queue-summary", "", theme.muted)
+  const queueEmpty = text(renderer, "queue-empty", "", theme.muted)
+  queuePanel.add(queueNowPlaying)
+  queuePanel.add(queueSummary)
+  queuePanel.add(queueEmpty)
+  const queueRows = Array.from({ length: maxQueueRows }, (_, index) => {
+    const row = createQueueRow(renderer, `queue-row-${index}`)
+    queuePanel.add(row.box)
+    return row
+  })
+  rail.add(queuePanel)
+
+  const shell = new BoxRenderable(renderer, {
+    id: "content-shell",
+    width: "100%",
+    flexGrow: 1,
+    flexDirection: "row",
+    overflow: "hidden",
+  })
+  shell.add(mainColumn)
+  shell.add(rail)
+
   const footer = new BoxRenderable(renderer, {
     id: "footer",
     width: "100%",
@@ -132,8 +217,7 @@ export function createAppView(
   footer.add(keyHelp)
   footer.add(destinationHint)
   app.add(header)
-  app.add(workspace)
-  app.add(player.root)
+  app.add(shell)
   app.add(footer)
 
   const paletteOverlay = createOverlay(renderer, "palette-overlay", 20)
@@ -402,6 +486,8 @@ export function createAppView(
     header,
     breadcrumb,
     providerStatus,
+    shell,
+    mainColumn,
     workspace,
     workspaceHeader,
     workspaceTitle,
@@ -410,6 +496,14 @@ export function createAppView(
     tableHeader,
     trackRows,
     player,
+    rail,
+    navigationPanel,
+    navigationRows,
+    queuePanel,
+    queueNowPlaying,
+    queueSummary,
+    queueEmpty,
+    queueRows,
     footer,
     mode,
     keyHelp,

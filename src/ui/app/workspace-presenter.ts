@@ -29,7 +29,12 @@ import {
   pluralize,
   searchEmptyMessage,
 } from "./copy"
-import { maxTrackRows, setTrackRowColor, setTrackRowContent } from "./renderables"
+import {
+  maxQueueRows,
+  maxTrackRows,
+  setTrackRowColor,
+  setTrackRowContent,
+} from "./renderables"
 import type { AppRenderables, AppViewModel } from "./view-contracts"
 
 export function renderWorkspace(
@@ -264,11 +269,12 @@ export function renderWorkspace(
   )
 
   view.trackRows.forEach((row, rowIndex) => {
-    row.year.visible = showYearColumn
     if (rowIndex >= activeRowCount) {
       row.box.visible = false
       return
     }
+
+    restoreTrackRowLayout(row, renderer.terminalWidth, showYearColumn)
 
     const itemIndex = rowStart + rowIndex
     const artistRow = activeBrowsePage?.kind === "artist"
@@ -299,13 +305,16 @@ export function renderWorkspace(
       const unavailable = isExternalLiveStation(station)
       const selected = station.id === selectedId
       const favorite = model.favoriteStationIds.has(appleStationResourceId(station) ?? "")
+      const unavailableCopy = "unavailable in MusicKit"
       row.box.visible = true
       setTrackRowContent(row, {
-        title: `${selected ? "›" : " "} ${favorite ? "★ " : ""}${station.title}`,
+        title: `${selected ? "›" : " "} ${favorite ? "★ " : ""}${station.title}${
+          unavailable && renderer.terminalWidth < 100 ? ` — ${unavailableCopy}` : ""
+        }`,
         artist: unavailable
-          ? "unavailable in MusicKit"
+          ? renderer.terminalWidth < 100 ? "" : unavailableCopy
           : station.subtitle ?? (station.isLive ? "live" : "station"),
-        album: station.description ?? "",
+        album: unavailable ? unavailableCopy : station.description ?? "",
         time: "",
       })
       row.box.backgroundColor = selected ? theme.selection : theme.background
@@ -432,6 +441,12 @@ export function renderWorkspace(
         time: "",
       })
       row.box.backgroundColor = theme.background
+      row.title.flexGrow = 1
+      row.title.width = "auto"
+      row.artist.visible = false
+      row.album.visible = false
+      row.year.visible = false
+      row.time.visible = false
       setTrackRowColor(row, theme.muted)
       return
     }
@@ -453,9 +468,101 @@ export function renderWorkspace(
     setTrackRowColor(row, selected ? theme.text : theme.muted)
   })
 
+  renderRightRail(view, model)
+}
+
+function renderRightRail(view: AppRenderables, model: AppViewModel): void {
+  const destinations = [
+    ["home", "Home", "g h"],
+    ["library", "Library", "g l"],
+    ["playlists", "Playlists", "g p"],
+    ["radio", "Radio", "g r"],
+    ["search", "Search", "g s"],
+    ["queue", "Queue", "g q"],
+  ] as const
+
+  destinations.forEach(([destination, label, shortcut], index) => {
+    const row = view.navigationRows[index]!
+    const selected = model.state.destination === destination
+    row.label.content = `${selected ? "›" : " "} ${label}`
+    row.shortcut.content = shortcut
+    row.box.backgroundColor = selected ? theme.selection : theme.background
+    row.label.fg = selected ? theme.text : theme.muted
+    row.shortcut.fg = selected ? theme.text : theme.muted
+  })
+
+  const currentTrack = model.player.currentTrack
+  const queue = model.player.queue
+  const source = model.player.source
+  const sourceLabel = source?.type === "station"
+    ? `${source.isLive ? "LIVE" : "RADIO"} ${source.title}`
+    : ""
+  const selectedQueueTrackId = model.state.lists.queue.selectedTrackId
+
+  view.queueNowPlaying.content = currentTrack
+    ? `NOW  ${currentTrack.title}`
+    : ""
+  view.queueNowPlaying.fg = currentTrack ? theme.text : theme.muted
+  view.queueSummary.content = queue.length > 0
+    ? `${currentTrack ? `${currentTrack.artist}  ·  ` : ""}${sourceLabel ? `${sourceLabel}  ·  ` : ""}${queue.length} up next`
+    : currentTrack
+      ? `${currentTrack.artist}  ·  ${sourceLabel || (model.player.dynamicQueue ? "radio continues" : "end of queue")}`
+      : ""
+  view.queueSummary.fg = theme.muted
+  view.queueEmpty.visible = !currentTrack && queue.length === 0
+  view.queueEmpty.content = view.queueEmpty.visible
+    ? emptyMessage("queue", 0, model.player.dynamicQueue)
+    : ""
+
+  view.queueRows.forEach((row, index) => {
+    const track = queue[index]
+    if (!track || index >= maxQueueRows) {
+      row.box.visible = false
+      return
+    }
+    const selected = track.id === selectedQueueTrackId
+    row.box.visible = true
+    row.title.content = `${selected ? "›" : " "} ${track.title}`
+    row.detail.content = track.artist
+    row.box.backgroundColor = selected ? theme.selection : theme.background
+    row.title.fg = selected ? theme.text : theme.muted
+    row.detail.fg = selected ? theme.text : theme.muted
+  })
 }
 
 function isExternalLiveStation(station: Station): boolean {
   return "apple" in station &&
     (station as AppleCatalogStation).apple.externalLiveStream === true
+}
+
+function restoreTrackRowLayout(
+  row: AppRenderables["trackRows"][number],
+  width: number,
+  showYearColumn: boolean,
+): void {
+  row.year.visible = showYearColumn
+  row.time.visible = true
+  if (width < 64) {
+    row.title.flexGrow = 1
+    row.title.width = "auto"
+    row.artist.visible = false
+    row.album.visible = false
+    return
+  }
+  if (width < 100) {
+    row.title.flexGrow = 0
+    row.title.width = "44%"
+    row.artist.visible = true
+    row.artist.flexGrow = 1
+    row.artist.width = "auto"
+    row.album.visible = false
+    return
+  }
+  row.title.flexGrow = 0
+  row.title.width = "32%"
+  row.artist.visible = true
+  row.artist.flexGrow = 0
+  row.artist.width = "24%"
+  row.album.visible = true
+  row.album.flexGrow = 1
 }

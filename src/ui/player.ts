@@ -62,6 +62,7 @@ export function createPlayerPanel(
   options: PlayerPanelOptions = {},
 ): PlayerPanel {
   let terminalWidth = renderer.terminalWidth
+  let contentWidth = renderer.terminalWidth
   let compactHeight = false
   let visualizerEnabled = true
   let visualizerSettings = options.visualizer ?? defaultVisualizerSettings
@@ -104,6 +105,10 @@ export function createPlayerPanel(
     settings: visualizerSettings,
     palette: resolveVisualizerPalette(visualizerSettings.palette, theme),
   })
+  visualizer.root.border = ["top"]
+  visualizer.root.borderColor = theme.border
+  visualizer.root.title = " SPECTRUM  ·  v toggle  ·  shift+v configure "
+  visualizer.root.titleColor = theme.accent
 
   const progressRow = playerRow(renderer, "player-progress-row", "center")
   const progress = playerText(renderer, "player-progress", "", theme.muted)
@@ -155,7 +160,7 @@ export function createPlayerPanel(
     progressDuration = state.canSeek !== false && track && duration !== null && duration > 0
       ? duration
       : null
-    progressWidth = progressBarWidth(terminalWidth)
+    progressWidth = progressBarWidth(contentWidth)
     const position = finiteSeconds(state.positionSeconds)
     const boundedPosition = duration !== null && duration > 0
       ? Math.min(position, duration)
@@ -308,7 +313,8 @@ export function createPlayerPanel(
   }
 
   function applyResponsiveLayout(width: number, isCompactHeight: boolean): void {
-    terminalWidth = width
+    terminalWidth = renderer.terminalWidth
+    contentWidth = width
     compactHeight = isCompactHeight
     root.height = compactHeight ? 3 : visualizerEnabled ? 5 + visualizerSettings.height : 5
     root.paddingX = compactHeight ? 1 : 2
@@ -319,8 +325,8 @@ export function createPlayerPanel(
     context.visible = !compactHeight
     status.width = 3
     if (latestState) renderModeControls(latestState)
-    quality.applyResponsiveLayout(width, compactHeight)
-    visualizer.applyResponsiveLayout(width, compactHeight || !visualizerEnabled)
+    quality.applyResponsiveLayout(contentWidth, compactHeight)
+    visualizer.applyResponsiveLayout(contentWidth, compactHeight || !visualizerEnabled)
   }
 
   applyResponsiveLayout(terminalWidth, compactHeight)
