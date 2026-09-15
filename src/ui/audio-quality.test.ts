@@ -36,7 +36,7 @@ describe("AudioQualityBadge", () => {
     badge.applyResponsiveLayout(80, false)
     badge.render({ format: "dolby-atmos", source: "catalog" })
     await setup.renderOnce()
-    expect(setup.captureCharFrame()).toContain("AUDIO  DOLBY ATMOS")
+    expect(setup.captureCharFrame()).toContain("QUALITY DOLBY ATMOS")
 
     badge.applyResponsiveLayout(80, true)
     await setup.renderOnce()

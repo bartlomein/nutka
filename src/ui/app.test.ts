@@ -27,7 +27,7 @@ describe("Nutka TUI: navigation and layout", () => {
     const frame = fixture.setup.captureCharFrame()
 
     expect(frame).toContain("Apple Music Home is not loaded yet")
-    expect(frame).toContain("DESTINATIONS")
+    expect(frame).toContain("NAVIGATION")
     expect(frame).toContain("› Home")
     expect(frame).toContain("QUEUE")
     expect(frame).toContain("queue is empty")
@@ -111,11 +111,11 @@ describe("Nutka TUI: navigation and layout", () => {
     fixture.setup.mockInput.pressKey("g")
     fixture.setup.mockInput.pressKey("l")
     await fixture.setup.renderOnce()
-    expect(fixture.setup.captureCharFrame()).not.toContain("DESTINATIONS")
+    expect(fixture.setup.captureCharFrame()).not.toContain("NAVIGATION")
 
     fixture.setup.resize(60, 22)
     await fixture.setup.renderOnce()
-    expect(fixture.setup.captureCharFrame()).not.toContain("DESTINATIONS")
+    expect(fixture.setup.captureCharFrame()).not.toContain("NAVIGATION")
     expect(fixture.setup.captureCharFrame()).toContain("First Track — Artist One")
   })
 
@@ -128,7 +128,7 @@ describe("Nutka TUI: navigation and layout", () => {
       await shortFixture.setup.renderOnce()
       const frame = shortFixture.setup.captureCharFrame()
 
-      expect(frame).not.toContain("DESTINATIONS")
+      expect(frame).not.toContain("NAVIGATION")
       expect(frame).not.toContain("QUEUE")
       expect(frame).toContain("First Track")
       expect(frame).toContain("nothing playing")

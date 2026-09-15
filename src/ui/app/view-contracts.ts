@@ -102,7 +102,11 @@ export interface AppRenderables {
   player: PlayerPanel
   navigationRail: BoxRenderable
   navigationPanel: BoxRenderable
+  navigationLibraryTitle: TextRenderable
+  navigationControlsTitle: TextRenderable
   navigationRows: readonly NavigationRow[]
+  libraryRows: readonly NavigationRow[]
+  controlRows: readonly NavigationRow[]
   queueRail: BoxRenderable
   queuePanel: BoxRenderable
   queueNowPlaying: TextRenderable

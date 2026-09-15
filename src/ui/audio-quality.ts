@@ -23,10 +23,11 @@ export function createAudioQualityBadge(renderer: CliRenderer): AudioQualityBadg
     truncate: true,
     visible: false,
   })
+  root.flexShrink = 0
 
   function update(): void {
     const visible = Boolean(currentQuality) && !compactHeight && terminalWidth >= 64
-    const displayWidth = terminalWidth >= 120 ? 30 : terminalWidth < 80 ? 16 : 20
+    const displayWidth = terminalWidth >= 120 ? 30 : terminalWidth >= 88 ? 24 : terminalWidth < 80 ? 16 : 20
     root.width = displayWidth
     root.visible = visible
     if (!currentQuality) {
@@ -34,7 +35,14 @@ export function createAudioQualityBadge(renderer: CliRenderer): AudioQualityBadg
       return
     }
     root.fg = isPremiumQuality(currentQuality) ? theme.amber : theme.muted
-    const label = formatAudioQuality(currentQuality, displayWidth < 30)
+    const formatted = formatAudioQuality(currentQuality, displayWidth < 30)
+    const label = terminalWidth < 88
+      ? formatted.startsWith("AUDIO  ")
+        ? formatted.replace(/^AUDIO  /u, "QUALITY ")
+        : `QUALITY ${formatted}`
+      : formatted.startsWith("AUDIO  ")
+        ? formatted.replace(/^AUDIO  /u, "AUDIO QUALITY  ")
+        : `AUDIO QUALITY  ${formatted}`
     root.content = displayWidth < 30
       ? label.padStart(displayWidth)
       : ` ${label} `.padStart(displayWidth)

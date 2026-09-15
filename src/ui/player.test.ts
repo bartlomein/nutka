@@ -60,7 +60,7 @@ describe("PlayerPanel", () => {
     expect(frame).toContain("●")
     expect(frame.match(/[▁▂▃▄▅▆▇█]/gu)?.length).toBeGreaterThanOrEqual(16)
     expect(frame).toContain("NEXT  Teardrop  ·  Massive Attack")
-    expect(frame).toContain("AUDIO  LOSSLESS")
+    expect(frame).toContain("AUDIO QUALITY  LOSSLESS")
     expect(frame).toContain("SPECTRUM")
     expect(frame).toContain("v toggle")
     expect(frame).toContain("shift+v configure")

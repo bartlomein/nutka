@@ -80,6 +80,8 @@ export function createPlayerPanel(
     border: true,
     borderColor: theme.border,
     backgroundColor: theme.background,
+    title: " NOW PLAYING ",
+    titleColor: theme.accent,
   })
 
   const primary = playerRow(renderer, "player-primary", "center")

@@ -145,7 +145,7 @@ export function createAppView(
     flexDirection: "column",
     backgroundColor: theme.surface,
   })
-  navigationPanel.add(text(renderer, "navigation-title", "DESTINATIONS", theme.accent))
+  navigationPanel.add(text(renderer, "navigation-title", "NAVIGATION", theme.accent))
   const navigationRows = [
     ["home", "Home", "g h"],
     ["library", "Library", "g l"],
@@ -155,6 +155,32 @@ export function createAppView(
     ["queue", "Queue", "g q"],
   ].map(([destination, label, shortcut]) => {
     const row = createNavigationRow(renderer, `navigation-${destination}`)
+    row.label.content = `  ${label}`
+    row.shortcut.content = shortcut
+    navigationPanel.add(row.box)
+    return row
+  })
+  const navigationLibraryTitle = text(renderer, "navigation-library-title", "LIBRARY", theme.accent)
+  navigationPanel.add(navigationLibraryTitle)
+  const libraryRows = [
+    ["songs", "Songs", "1"],
+    ["albums", "Albums", "2"],
+    ["artists", "Artists", "3"],
+  ].map(([section, label, shortcut]) => {
+    const row = createNavigationRow(renderer, `navigation-library-${section}`)
+    row.label.content = `  ${label}`
+    row.shortcut.content = shortcut
+    navigationPanel.add(row.box)
+    return row
+  })
+  const navigationControlsTitle = text(renderer, "navigation-controls-title", "CONTROLS", theme.accent)
+  navigationPanel.add(navigationControlsTitle)
+  const controlRows = [
+    ["visualizer", "Visualizer", "v"],
+    ["shuffle", "Shuffle", "s"],
+    ["repeat", "Repeat", "r"],
+  ].map(([control, label, shortcut]) => {
+    const row = createNavigationRow(renderer, `navigation-control-${control}`)
     row.label.content = `  ${label}`
     row.shortcut.content = shortcut
     navigationPanel.add(row.box)
@@ -514,7 +540,11 @@ export function createAppView(
     player,
     navigationRail,
     navigationPanel,
+    navigationLibraryTitle,
+    navigationControlsTitle,
     navigationRows,
+    libraryRows,
+    controlRows,
     queueRail,
     queuePanel,
     queueNowPlaying,

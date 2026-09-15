@@ -123,7 +123,9 @@ export function renderWorkspace(
     ? "nutka  /  search  /  album"
     : `nutka  /  ${destinationName.toLowerCase()}`
   view.workspaceTitle.content = model.library
-    ? model.library.page.title
+    ? model.library.nested
+      ? `${model.library.page.parent?.kind === "artist" ? "ARTIST" : "ALBUM"} / ${model.library.page.title}`
+      : `LIBRARY / ${model.library.section.toUpperCase()}`
     : activeBrowsePage
     ? activeBrowsePage.kind === "artist"
       ? activeBrowsePage.artist.name
@@ -483,10 +485,14 @@ export function renderWorkspace(
     setTrackRowColor(row, selected ? theme.text : theme.muted)
   })
 
-  renderRightRail(view, model)
+  renderRightRail(renderer, view, model)
 }
 
-function renderRightRail(view: AppRenderables, model: AppViewModel): void {
+function renderRightRail(
+  renderer: CliRenderer,
+  view: AppRenderables,
+  model: AppViewModel,
+): void {
   const destinations = [
     ["home", "Home", "g h"],
     ["library", "Library", "g l"],
@@ -506,22 +512,58 @@ function renderRightRail(view: AppRenderables, model: AppViewModel): void {
     row.shortcut.fg = selected ? theme.text : theme.muted
   })
 
+  const showLibrary = model.library !== undefined
+  view.navigationLibraryTitle.visible = showLibrary
+  view.libraryRows.forEach((row, index) => {
+    row.box.visible = showLibrary
+    const section = ["songs", "albums", "artists"][index]!
+    const label = ["Songs", "Albums", "Artists"][index]!
+    const shortcut = ["1", "2", "3"][index]!
+    const selected = showLibrary && model.state.destination === "library" &&
+      model.library?.section === section
+    row.label.content = `${selected ? "›" : " "} ${label}`
+    row.shortcut.content = shortcut
+    row.box.backgroundColor = theme.background
+    row.label.fg = selected ? theme.text : theme.muted
+    row.shortcut.fg = selected ? theme.text : theme.muted
+  })
+
+  view.navigationControlsTitle.visible = true
+  const controls = [
+    { row: view.controlRows[0]!, visible: true, label: "Visualizer", value: model.visualizerEnabled ? "ON" : "OFF", shortcut: "v" },
+    { row: view.controlRows[1]!, visible: model.player.canSetShuffleMode, label: "Shuffle", value: model.player.shuffleMode === "songs" ? "ON" : "OFF", shortcut: "s" },
+    { row: view.controlRows[2]!, visible: model.player.canSetRepeatMode, label: "Repeat", value: repeatModeLabel(model.player.repeatMode), shortcut: "r" },
+  ]
+  controls.forEach(({ row, visible, label, value, shortcut }) => {
+    row.box.visible = visible
+    row.label.content = `  ${label}`
+    row.shortcut.content = visible ? `${shortcut} ${value}` : ""
+    row.box.backgroundColor = theme.background
+    row.label.fg = theme.muted
+    row.shortcut.fg = theme.muted
+  })
+
   const currentTrack = model.player.currentTrack
   const queue = model.player.queue
   const source = model.player.source
-  const sourceLabel = source?.type === "station"
-    ? `${source.isLive ? "LIVE" : "RADIO"} ${source.title}`
-    : ""
   const selectedQueueTrackId = model.state.lists.queue.selectedTrackId
 
   view.queueNowPlaying.content = currentTrack
-    ? `NOW  ${currentTrack.title}`
+    ? `NOW PLAYING  ${currentTrack.title}`
     : ""
   view.queueNowPlaying.fg = currentTrack ? theme.text : theme.muted
+  const currentMetadata = currentTrack
+    ? [currentTrack.artist, currentTrack.album].filter(Boolean).join("  ·  ")
+    : ""
+  const sourceContext = source?.type === "station"
+    ? source.isLive ? "LIVE" : "RADIO"
+    : ""
   view.queueSummary.content = queue.length > 0
-    ? `${currentTrack ? `${currentTrack.artist}  ·  ` : ""}${sourceLabel ? `${sourceLabel}  ·  ` : ""}${queue.length} up next`
+    ? `${sourceContext ? `SOURCE ${sourceContext}  ·  ` : ""}${queue.length} UP NEXT`
     : currentTrack
-      ? `${currentTrack.artist}  ·  ${sourceLabel || (model.player.dynamicQueue ? "radio continues" : "end of queue")}`
+      ? [currentMetadata, sourceContext || (model.player.dynamicQueue ? "RADIO CONTINUES" : "END OF QUEUE")]
+        .filter(Boolean)
+        .join("  ·  ")
       : ""
   view.queueSummary.fg = theme.muted
   view.queueEmpty.visible = !currentTrack && queue.length === 0
@@ -529,20 +571,44 @@ function renderRightRail(view: AppRenderables, model: AppViewModel): void {
     ? emptyMessage("queue", 0, model.player.dynamicQueue)
     : ""
 
+  const queueRowCapacity = Math.max(
+    1,
+    Math.min(maxQueueRows, Math.floor(Math.max(0, renderer.terminalHeight - 9) / 2)),
+  )
   view.queueRows.forEach((row, index) => {
     const track = queue[index]
-    if (!track || index >= maxQueueRows) {
+    if (!track || index >= queueRowCapacity) {
       row.box.visible = false
       return
     }
     const selected = track.id === selectedQueueTrackId
     row.box.visible = true
-    row.title.content = `${selected ? "›" : " "} ${track.title}`
-    row.detail.content = track.artist
+    row.number.content = String(index + 1).padStart(2, "0")
+    row.title.content = `${selected ? "› " : ""}${index === 0 ? "NEXT " : ""}${track.title}`
+    const queueMetadata = [track.artist, track.album].filter(Boolean).join("  ·  ")
+    const queueDuration = availableDuration(track.durationSeconds)
+    row.detail.content = queueMetadata
+    row.detail.visible = queueMetadata.length > 0
+    row.duration.content = queueDuration
+    row.duration.visible = queueDuration.length > 0
     row.box.backgroundColor = selected ? theme.selection : theme.background
+    row.number.fg = selected ? theme.text : theme.muted
     row.title.fg = selected ? theme.text : theme.muted
     row.detail.fg = selected ? theme.text : theme.muted
+    row.duration.fg = selected ? theme.text : theme.muted
   })
+}
+
+function repeatModeLabel(mode: AppViewModel["player"]["repeatMode"]): string {
+  if (mode === "all") return "ALL"
+  if (mode === "one") return "ONE"
+  return "OFF"
+}
+
+function availableDuration(durationSeconds: number): string {
+  return Number.isFinite(durationSeconds) && durationSeconds > 0
+    ? formatDuration(durationSeconds)
+    : ""
 }
 
 function isExternalLiveStation(station: Station): boolean {
